@@ -16,7 +16,9 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0"
+        
+        // On récupère la version passée par GitVersion, sinon on garde 1.0 par défaut
+        versionName = project.findProperty("versionName")?.toString() ?: "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
