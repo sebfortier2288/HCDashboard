@@ -82,6 +82,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     var weights by remember { mutableStateOf<List<WeightRecord>>(emptyList()) }
@@ -331,7 +332,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         Spacer(modifier = Modifier.height(8.dp))
 
         if (isAuthorized) {
-            TabRow(selectedTabIndex = selectedTab.ordinal) {
+            SecondaryTabRow(selectedTabIndex = selectedTab.ordinal) {
                 DashboardTab.entries.forEach { tab ->
                     Tab(
                         selected = selectedTab == tab,
@@ -384,9 +385,9 @@ fun TodayView(steps: Long, sleepDuration: Duration?, restingHeartRate: Long?, hr
     val sleepMinutes = sleepDuration?.toMinutes() ?: 0L
     val sleepValueColor = when {
         sleepDuration == null -> MaterialTheme.colorScheme.onSecondaryContainer
-        sleepMinutes >= 7 * 60 -> Color(0xFF4CAF50) // Vert >= 7h
-        sleepMinutes >= 6 * 60 -> Color(0xFFFFB300) // Jaune >= 6h
-        else -> Color(0xFFF44336) // Rouge < 6h
+        sleepMinutes >= 7 * 60 -> Color(0xFF4CAF50) // Green >= 7h
+        sleepMinutes >= 6 * 60 -> Color(0xFFFFB300) // Yellow >= 6h
+        else -> Color(0xFFF44336) // Red < 6h
     }
 
     SummaryCard(
@@ -411,9 +412,9 @@ fun TodayView(steps: Long, sleepDuration: Duration?, restingHeartRate: Long?, hr
     val hrvValueColor = if (hrvAvg != null && hrvBaseline != null) {
         val ratio = hrvAvg / hrvBaseline
         when {
-            ratio < 0.8 -> Color(0xFFF44336)        // Rouge : Trop bas (< 80%)
-            ratio < 0.9 || ratio > 1.2 -> Color(0xFFFFB300) // Jaune : Déséquilibré (bas ou anormalement haut)
-            else -> Color(0xFF4CAF50)               // Vert : Balanced (90% - 120%)
+            ratio < 0.8 -> Color(0xFFF44336)        // Red
+            ratio !in 0.9..1.2 -> Color(0xFFFFB300) // Yellow
+            else -> Color(0xFF4CAF50)               // Green
         }
     } else MaterialTheme.colorScheme.onSurfaceVariant
 
