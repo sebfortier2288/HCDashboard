@@ -18,13 +18,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.records.BodyFatRecord
 import androidx.health.connect.client.records.HeartRateVariabilityRmssdRecord
 import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.RestingHeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
+import androidx.health.connect.client.records.Vo2MaxRecord
 import androidx.health.connect.client.records.WeightRecord
-import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import dev.sfpixel.hcdashboard.ui.theme.HCDashboardTheme
@@ -44,17 +45,19 @@ enum class TimeRange(val label: String, val days: Long) {
 
 enum class DashboardTab(val title: String) {
     Today("Today"),
-    Historical("Historical")
+    History("History")
 }
 
 class MainActivity : ComponentActivity() {
 
     private val handlers = listOf(
         WeightHandler, 
-        StepsHandler, 
+        BodyFatHandler,
+        StepsHandler,
         SleepHandler, 
         RestingHeartRateHandler, 
-        HeartRateVariabilityHandler
+        HeartRateVariabilityHandler,
+        Vo2MaxHandler
     )
     
     private val permissions = handlers.map { 
@@ -79,19 +82,22 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     var weights by remember { mutableStateOf<List<WeightRecord>>(emptyList()) }
+    var bodyFats by remember { mutableStateOf<List<BodyFatRecord>>(emptyList()) }
     var rawSteps by remember { mutableStateOf<List<StepsRecord>>(emptyList()) }
     var rawSleepSessions by remember { mutableStateOf<List<SleepSessionRecord>>(emptyList()) }
     var restingHeartRateRecords by remember { mutableStateOf<List<RestingHeartRateRecord>>(emptyList()) }
     var hrvRecords by remember { mutableStateOf<List<HeartRateVariabilityRmssdRecord>>(emptyList()) }
+    var vo2MaxRecords by remember { mutableStateOf<List<Vo2MaxRecord>>(emptyList()) }
     
     var todaySteps by remember { mutableLongStateOf(0L) }
     var lastNightSleepDuration by remember { mutableStateOf<Duration?>(null) }
     var todayRestingHeartRate by remember { mutableStateOf<Long?>(null) }
     var hrv7DayAvg by remember { mutableStateOf<Double?>(null) }
-    var hrvHistoricalAvg by remember { mutableStateOf<Double?>(null) }
+    var hrvHistoryAvg by remember { mutableStateOf<Double?>(null) }
     
     var isAuthorized by remember { mutableStateOf(false) }
     var selectedRange by remember { mutableStateOf(TimeRange.Last7Days) }
@@ -190,6 +196,24 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         }
     }
 
+    val vo2MaxProcessed = remember(vo2MaxRecords, selectedRange) {
+        if (selectedRange == TimeRange.Last24h) {
+            vo2MaxRecords
+        } else {
+            vo2MaxRecords.groupBy { 
+                it.time.atZone(ZoneId.systemDefault()).toLocalDate()
+            }.map { (date, list) ->
+                val first = list.first()
+                Vo2MaxRecord(
+                    time = date.atStartOfDay(ZoneId.systemDefault()).toInstant(),
+                    zoneOffset = first.zoneOffset,
+                    vo2MillilitersPerMinuteKilogram = list.map { it.vo2MillilitersPerMinuteKilogram }.average(),
+                    metadata = first.metadata
+                )
+            }.sortedBy { it.time }.takeLast(selectedRange.days.toInt())
+        }
+    }
+
     val requestPermissionLauncher = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract()
     ) { granted ->
@@ -211,7 +235,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         return result
     }
 
-    val loadHistoricalData: suspend (TimeRange) -> Unit = { range ->
+    val loadHistoryData: suspend (TimeRange) -> Unit = { range ->
         isLoading = true
         try {
             val endTime = Instant.now()
@@ -224,10 +248,12 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             val timeFilter = TimeRangeFilter.between(startTime, endTime)
 
             weights = fetchAllPages(WeightRecord::class, timeFilter).sortedBy { it.time }
+            bodyFats = fetchAllPages(BodyFatRecord::class, timeFilter).sortedBy { it.time }
             rawSteps = fetchAllPages(StepsRecord::class, timeFilter).sortedBy { it.startTime }
             rawSleepSessions = fetchAllPages(SleepSessionRecord::class, timeFilter).sortedBy { it.startTime }
             restingHeartRateRecords = fetchAllPages(RestingHeartRateRecord::class, timeFilter).sortedBy { it.time }
             hrvRecords = fetchAllPages(HeartRateVariabilityRmssdRecord::class, timeFilter).sortedBy { it.time }
+            vo2MaxRecords = fetchAllPages(Vo2MaxRecord::class, timeFilter).sortedBy { it.time }
 
         } catch (e: Exception) {
             e.printStackTrace()
@@ -274,7 +300,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                 HeartRateVariabilityRmssdRecord::class,
                 TimeRangeFilter.between(now.minus(30, ChronoUnit.DAYS), now)
             )
-            hrvHistoricalAvg = if (hrv30DayRecords.isNotEmpty()) {
+            hrvHistoryAvg = if (hrv30DayRecords.isNotEmpty()) {
                 hrv30DayRecords.map { it.heartRateVariabilityMillis }.average()
             } else null
             
@@ -290,7 +316,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             if (selectedTab == DashboardTab.Today) {
                 loadTodayData()
             } else {
-                loadHistoricalData(selectedRange)
+                loadHistoryData(selectedRange)
             }
         }
     }
@@ -306,7 +332,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         Spacer(modifier = Modifier.height(8.dp))
 
         if (isAuthorized) {
-            TabRow(selectedTabIndex = selectedTab.ordinal) {
+            SecondaryTabRow(selectedTabIndex = selectedTab.ordinal) {
                 DashboardTab.entries.forEach { tab ->
                     Tab(
                         selected = selectedTab == tab,
@@ -324,17 +350,19 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                     .verticalScroll(scrollState)
             ) {
                 if (selectedTab == DashboardTab.Today) {
-                    TodayView(todaySteps, lastNightSleepDuration, todayRestingHeartRate, hrv7DayAvg, hrvHistoricalAvg)
+                    TodayView(todaySteps, lastNightSleepDuration, todayRestingHeartRate, hrv7DayAvg, hrvHistoryAvg)
                 } else {
-                    HistoricalView(
+                    HistoryView(
                         selectedRange = selectedRange,
                         onRangeSelected = { selectedRange = it },
                         isLoading = isLoading,
                         weights = weights,
+                        bodyFats = bodyFats,
                         stepsProcessed = stepsProcessed,
                         sleepProcessed = sleepProcessed,
                         restingHeartRateProcessed = rhrProcessed,
-                        hrvProcessed = hrvProcessed
+                        hrvProcessed = hrvProcessed,
+                        vo2MaxProcessed = vo2MaxProcessed
                     )
                 }
                 Spacer(modifier = Modifier.height(16.dp))
@@ -348,15 +376,6 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
 
 @Composable
 fun TodayView(steps: Long, sleepDuration: Duration?, restingHeartRate: Long?, hrvAvg: Double?, hrvBaseline: Double?) {
-    SummaryCard(
-        title = "Steps Today",
-        value = steps.toString(),
-        containerColor = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-    )
-    
-    Spacer(modifier = Modifier.height(12.dp))
-    
     val sleepText = sleepDuration?.let {
         val hours = it.toHours()
         val minutes = it.toMinutes() % 60
@@ -366,9 +385,9 @@ fun TodayView(steps: Long, sleepDuration: Duration?, restingHeartRate: Long?, hr
     val sleepMinutes = sleepDuration?.toMinutes() ?: 0L
     val sleepValueColor = when {
         sleepDuration == null -> MaterialTheme.colorScheme.onSecondaryContainer
-        sleepMinutes >= 7 * 60 -> Color(0xFF4CAF50) // Vert >= 7h
-        sleepMinutes >= 6 * 60 -> Color(0xFFFFB300) // Jaune >= 6h
-        else -> Color(0xFFF44336) // Rouge < 6h
+        sleepMinutes >= 7 * 60 -> Color(0xFF4CAF50) // Green >= 7h
+        sleepMinutes >= 6 * 60 -> Color(0xFFFFB300) // Yellow >= 6h
+        else -> Color(0xFFF44336) // Red < 6h
     }
 
     SummaryCard(
@@ -393,9 +412,9 @@ fun TodayView(steps: Long, sleepDuration: Duration?, restingHeartRate: Long?, hr
     val hrvValueColor = if (hrvAvg != null && hrvBaseline != null) {
         val ratio = hrvAvg / hrvBaseline
         when {
-            ratio < 0.8 -> Color(0xFFF44336)        // Rouge : Trop bas (< 80%)
-            ratio < 0.9 || ratio > 1.2 -> Color(0xFFFFB300) // Jaune : Déséquilibré (bas ou anormalement haut)
-            else -> Color(0xFF4CAF50)               // Vert : Balanced (90% - 120%)
+            ratio < 0.8 -> Color(0xFFF44336)        // Red
+            ratio !in 0.9..1.2 -> Color(0xFFFFB300) // Yellow
+            else -> Color(0xFF4CAF50)               // Green
         }
     } else MaterialTheme.colorScheme.onSurfaceVariant
 
@@ -405,6 +424,15 @@ fun TodayView(steps: Long, sleepDuration: Duration?, restingHeartRate: Long?, hr
         containerColor = MaterialTheme.colorScheme.surfaceVariant,
         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         valueColor = hrvValueColor
+    )
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    SummaryCard(
+        title = "Steps Today",
+        value = steps.toString(),
+        containerColor = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
     )
 }
 
@@ -443,15 +471,17 @@ fun SummaryCard(
 }
 
 @Composable
-fun HistoricalView(
+fun HistoryView(
     selectedRange: TimeRange,
     onRangeSelected: (TimeRange) -> Unit,
     isLoading: Boolean,
     weights: List<WeightRecord>,
+    bodyFats: List<BodyFatRecord>,
     stepsProcessed: List<StepsRecord>,
     sleepProcessed: List<SleepSessionRecord>,
     restingHeartRateProcessed: List<RestingHeartRateRecord>,
-    hrvProcessed: List<HeartRateVariabilityRmssdRecord>
+    hrvProcessed: List<HeartRateVariabilityRmssdRecord>,
+    vo2MaxProcessed: List<Vo2MaxRecord>
 ) {
     SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
         TimeRange.entries.forEachIndexed { index, range ->
@@ -513,11 +543,34 @@ fun HistoricalView(
 
         Spacer(modifier = Modifier.height(32.dp))
 
+        Text("VO2 Max History", style = MaterialTheme.typography.titleMedium)
+        if (vo2MaxProcessed.isNotEmpty()) {
+            HealthChart(
+                handler = Vo2MaxHandler, 
+                records = vo2MaxProcessed,
+                selectedRange = selectedRange,
+                isColumnChart = false
+            )
+        } else {
+            Text("No VO2 Max data found.", modifier = Modifier.padding(vertical = 8.dp))
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
         Text("Weight Evolution", style = MaterialTheme.typography.titleMedium)
         if (weights.isNotEmpty()) {
             HealthChart(handler = WeightHandler, records = weights, selectedRange = selectedRange)
         } else {
             Text("No weight data found.", modifier = Modifier.padding(vertical = 8.dp))
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        Text("Body Fat Evolution", style = MaterialTheme.typography.titleMedium)
+        if (bodyFats.isNotEmpty()) {
+            HealthChart(handler = BodyFatHandler, records = bodyFats, selectedRange = selectedRange)
+        } else {
+            Text("No body fat data found.", modifier = Modifier.padding(vertical = 8.dp))
         }
 
         Spacer(modifier = Modifier.height(32.dp))
