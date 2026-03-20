@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.records.BodyFatRecord
 import androidx.health.connect.client.records.HeartRateVariabilityRmssdRecord
 import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.RestingHeartRateRecord
@@ -51,7 +52,8 @@ class MainActivity : ComponentActivity() {
 
     private val handlers = listOf(
         WeightHandler, 
-        StepsHandler, 
+        BodyFatHandler,
+        StepsHandler,
         SleepHandler, 
         RestingHeartRateHandler, 
         HeartRateVariabilityHandler
@@ -82,6 +84,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     var weights by remember { mutableStateOf<List<WeightRecord>>(emptyList()) }
+    var bodyFats by remember { mutableStateOf<List<BodyFatRecord>>(emptyList()) }
     var rawSteps by remember { mutableStateOf<List<StepsRecord>>(emptyList()) }
     var rawSleepSessions by remember { mutableStateOf<List<SleepSessionRecord>>(emptyList()) }
     var restingHeartRateRecords by remember { mutableStateOf<List<RestingHeartRateRecord>>(emptyList()) }
@@ -224,6 +227,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             val timeFilter = TimeRangeFilter.between(startTime, endTime)
 
             weights = fetchAllPages(WeightRecord::class, timeFilter).sortedBy { it.time }
+            bodyFats = fetchAllPages(BodyFatRecord::class, timeFilter).sortedBy { it.time }
             rawSteps = fetchAllPages(StepsRecord::class, timeFilter).sortedBy { it.startTime }
             rawSleepSessions = fetchAllPages(SleepSessionRecord::class, timeFilter).sortedBy { it.startTime }
             restingHeartRateRecords = fetchAllPages(RestingHeartRateRecord::class, timeFilter).sortedBy { it.time }
@@ -331,6 +335,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                         onRangeSelected = { selectedRange = it },
                         isLoading = isLoading,
                         weights = weights,
+                        bodyFats = bodyFats,
                         stepsProcessed = stepsProcessed,
                         sleepProcessed = sleepProcessed,
                         restingHeartRateProcessed = rhrProcessed,
@@ -448,6 +453,7 @@ fun HistoricalView(
     onRangeSelected: (TimeRange) -> Unit,
     isLoading: Boolean,
     weights: List<WeightRecord>,
+    bodyFats: List<BodyFatRecord>,
     stepsProcessed: List<StepsRecord>,
     sleepProcessed: List<SleepSessionRecord>,
     restingHeartRateProcessed: List<RestingHeartRateRecord>,
@@ -518,6 +524,15 @@ fun HistoricalView(
             HealthChart(handler = WeightHandler, records = weights, selectedRange = selectedRange)
         } else {
             Text("No weight data found.", modifier = Modifier.padding(vertical = 8.dp))
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        Text("Body Fat Evolution", style = MaterialTheme.typography.titleMedium)
+        if (bodyFats.isNotEmpty()) {
+            HealthChart(handler = BodyFatHandler, records = bodyFats, selectedRange = selectedRange)
+        } else {
+            Text("No body fat data found.", modifier = Modifier.padding(vertical = 8.dp))
         }
 
         Spacer(modifier = Modifier.height(32.dp))
