@@ -26,7 +26,6 @@ import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.Vo2MaxRecord
 import androidx.health.connect.client.records.WeightRecord
-import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import dev.sfpixel.hcdashboard.ui.theme.HCDashboardTheme
@@ -46,7 +45,7 @@ enum class TimeRange(val label: String, val days: Long) {
 
 enum class DashboardTab(val title: String) {
     Today("Today"),
-    Historical("Historical")
+    History("History")
 }
 
 class MainActivity : ComponentActivity() {
@@ -97,7 +96,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     var lastNightSleepDuration by remember { mutableStateOf<Duration?>(null) }
     var todayRestingHeartRate by remember { mutableStateOf<Long?>(null) }
     var hrv7DayAvg by remember { mutableStateOf<Double?>(null) }
-    var hrvHistoricalAvg by remember { mutableStateOf<Double?>(null) }
+    var hrvHistoryAvg by remember { mutableStateOf<Double?>(null) }
     
     var isAuthorized by remember { mutableStateOf(false) }
     var selectedRange by remember { mutableStateOf(TimeRange.Last7Days) }
@@ -235,7 +234,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         return result
     }
 
-    val loadHistoricalData: suspend (TimeRange) -> Unit = { range ->
+    val loadHistoryData: suspend (TimeRange) -> Unit = { range ->
         isLoading = true
         try {
             val endTime = Instant.now()
@@ -300,7 +299,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                 HeartRateVariabilityRmssdRecord::class,
                 TimeRangeFilter.between(now.minus(30, ChronoUnit.DAYS), now)
             )
-            hrvHistoricalAvg = if (hrv30DayRecords.isNotEmpty()) {
+            hrvHistoryAvg = if (hrv30DayRecords.isNotEmpty()) {
                 hrv30DayRecords.map { it.heartRateVariabilityMillis }.average()
             } else null
             
@@ -316,7 +315,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             if (selectedTab == DashboardTab.Today) {
                 loadTodayData()
             } else {
-                loadHistoricalData(selectedRange)
+                loadHistoryData(selectedRange)
             }
         }
     }
@@ -350,9 +349,9 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                     .verticalScroll(scrollState)
             ) {
                 if (selectedTab == DashboardTab.Today) {
-                    TodayView(todaySteps, lastNightSleepDuration, todayRestingHeartRate, hrv7DayAvg, hrvHistoricalAvg)
+                    TodayView(todaySteps, lastNightSleepDuration, todayRestingHeartRate, hrv7DayAvg, hrvHistoryAvg)
                 } else {
-                    HistoricalView(
+                    HistoryView(
                         selectedRange = selectedRange,
                         onRangeSelected = { selectedRange = it },
                         isLoading = isLoading,
@@ -376,15 +375,6 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
 
 @Composable
 fun TodayView(steps: Long, sleepDuration: Duration?, restingHeartRate: Long?, hrvAvg: Double?, hrvBaseline: Double?) {
-    SummaryCard(
-        title = "Steps Today",
-        value = steps.toString(),
-        containerColor = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-    )
-    
-    Spacer(modifier = Modifier.height(12.dp))
-    
     val sleepText = sleepDuration?.let {
         val hours = it.toHours()
         val minutes = it.toMinutes() % 60
@@ -434,6 +424,15 @@ fun TodayView(steps: Long, sleepDuration: Duration?, restingHeartRate: Long?, hr
         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         valueColor = hrvValueColor
     )
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    SummaryCard(
+        title = "Steps Today",
+        value = steps.toString(),
+        containerColor = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+    )
 }
 
 @Composable
@@ -471,7 +470,7 @@ fun SummaryCard(
 }
 
 @Composable
-fun HistoricalView(
+fun HistoryView(
     selectedRange: TimeRange,
     onRangeSelected: (TimeRange) -> Unit,
     isLoading: Boolean,
