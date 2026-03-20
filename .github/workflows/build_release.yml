@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths-ignore:
+      - '**.md'
       - '.github/**'
   workflow_dispatch:
 
@@ -19,7 +20,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Nécessaire pour GitVersion
+          fetch-depth: 0 # Nécessaire pour GitVersion et le changelog
 
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@v3.1.11
@@ -43,6 +44,14 @@ jobs:
       - name: Build Debug APK
         run: ./gradlew assembleDebug -PversionName=${{ steps.gitversion.outputs.semVer }}
 
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          git log --pretty=format:"* %s (%h)" $(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)..HEAD >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Create Github Release
         uses: softprops/action-gh-release@v2
         with:
@@ -52,10 +61,9 @@ jobs:
           prerelease: false
           files: app/build/outputs/apk/debug/app-debug.apk
           body: |
-            Automated build for version ${{ steps.gitversion.outputs.semVer }}
-            Commit: ${{ github.sha }}
+            ## What's Changed
+            ${{ steps.changelog.outputs.CHANGELOG }}
             
-            Changes:
-            ${{ github.event.head_commit.message }}
+            **Full Commit**: ${{ github.sha }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
