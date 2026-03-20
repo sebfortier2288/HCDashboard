@@ -25,6 +25,7 @@ import com.patrykandpatrick.vico.compose.common.fill
 import com.patrykandpatrick.vico.core.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.core.cartesian.axis.VerticalAxis
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModel
+import com.patrykandpatrick.vico.core.cartesian.data.CartesianLayerRangeProvider
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.core.cartesian.data.ColumnCartesianLayerModel
 import com.patrykandpatrick.vico.core.cartesian.data.LineCartesianLayerModel
@@ -50,10 +51,10 @@ fun <T : Record> HealthChart(
     val lineColor = MaterialTheme.colorScheme.outlineVariant
     val thresholdColor = MaterialTheme.colorScheme.error.copy(alpha = 0.6f)
     
-    val defaultBarColor = Color(0xFF2196F3) // blue
-    val successBarColor = Color(0xFF4CAF50) // green
-    val warningBarColor = Color(0xFFFFB300) // yellow
-    val dangerBarColor = Color(0xFFF44336)  // red
+    val defaultBarColor = Color(0xFF2196F3) 
+    val successBarColor = Color(0xFF4CAF50) 
+    val warningBarColor = Color(0xFFFFB300) 
+    val dangerBarColor = Color(0xFFF44336)  
 
     val axisLabelComponent = rememberAxisLabelComponent(color = labelColor)
     val axisLineComponent = rememberAxisLineComponent(fill = fill(lineColor))
@@ -71,6 +72,21 @@ fun <T : Record> HealthChart(
                 }
             }
         )
+    }
+
+    val rangeProvider = remember(isColumnChart) {
+        object : CartesianLayerRangeProvider {
+            override fun getMinY(minY: Double, maxY: Double, extraStore: ExtraStore): Double {
+                if (isColumnChart) return 0.0
+                val delta = maxY - minY
+                return if (delta > 0) (minY - delta * 0.1).coerceAtLeast(0.0) else minY * 0.9
+            }
+
+            override fun getMaxY(minY: Double, maxY: Double, extraStore: ExtraStore): Double {
+                val delta = maxY - minY
+                return if (delta > 0) maxY + delta * 0.1 else maxY * 1.1
+            }
+        }
     }
 
     val thresholdLine = if (thresholdValue != null) {
@@ -124,12 +140,13 @@ fun <T : Record> HealthChart(
 
     CartesianChartHost(
         chart = rememberCartesianChart(
-            if (isColumnChart && columnProvider != null) {
-                rememberColumnCartesianLayer(columnProvider = columnProvider)
-            } else if (isColumnChart) {
-                rememberColumnCartesianLayer()
+            if (isColumnChart) {
+                rememberColumnCartesianLayer(
+                    columnProvider = columnProvider ?: ColumnCartesianLayer.ColumnProvider.series(),
+                    rangeProvider = rangeProvider
+                )
             } else {
-                rememberLineCartesianLayer()
+                rememberLineCartesianLayer(rangeProvider = rangeProvider)
             },
             startAxis = VerticalAxis.rememberStart(
                 label = axisLabelComponent,

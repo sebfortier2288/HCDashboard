@@ -83,14 +83,15 @@ class MainActivity : ComponentActivity() {
 fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     var weights by remember { mutableStateOf<List<WeightRecord>>(emptyList()) }
     var rawSteps by remember { mutableStateOf<List<StepsRecord>>(emptyList()) }
-    var sleepSessions by remember { mutableStateOf<List<SleepSessionRecord>>(emptyList()) }
+    var rawSleepSessions by remember { mutableStateOf<List<SleepSessionRecord>>(emptyList()) }
     var restingHeartRateRecords by remember { mutableStateOf<List<RestingHeartRateRecord>>(emptyList()) }
     var hrvRecords by remember { mutableStateOf<List<HeartRateVariabilityRmssdRecord>>(emptyList()) }
     
     var todaySteps by remember { mutableLongStateOf(0L) }
     var lastNightSleepDuration by remember { mutableStateOf<Duration?>(null) }
     var todayRestingHeartRate by remember { mutableStateOf<Long?>(null) }
-    var todayHrv by remember { mutableStateOf<Double?>(null) }
+    var hrv7DayAvg by remember { mutableStateOf<Double?>(null) }
+    var hrvHistoricalAvg by remember { mutableStateOf<Double?>(null) }
     
     var isAuthorized by remember { mutableStateOf(false) }
     var selectedRange by remember { mutableStateOf(TimeRange.Last7Days) }
@@ -104,33 +105,52 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             rawSteps.groupBy { 
                 it.startTime.atZone(ZoneId.systemDefault()).truncatedTo(ChronoUnit.HOURS).toInstant() 
             }.map { (time, list) ->
-                list.first().let { 
-                    StepsRecord(
-                        startTime = time,
-                        endTime = time.plus(1, ChronoUnit.HOURS),
-                        count = list.sumOf { it.count },
-                        startZoneOffset = it.startZoneOffset,
-                        endZoneOffset = it.endZoneOffset,
-                        metadata = it.metadata
-                    )
-                }
+                val first = list.first()
+                StepsRecord(
+                    startTime = time,
+                    endTime = time.plus(1, ChronoUnit.HOURS),
+                    count = list.sumOf { it.count },
+                    startZoneOffset = first.startZoneOffset,
+                    endZoneOffset = first.endZoneOffset,
+                    metadata = first.metadata
+                )
             }.sortedBy { it.startTime }
         } else {
             rawSteps.groupBy { 
                 it.startTime.atZone(ZoneId.systemDefault()).toLocalDate()
             }.map { (date, list) ->
                 val start = date.atStartOfDay(ZoneId.systemDefault()).toInstant()
-                list.first().let {
-                    StepsRecord(
-                        startTime = start,
-                        endTime = start.plus(1, ChronoUnit.DAYS),
-                        count = list.sumOf { it.count },
-                        startZoneOffset = it.startZoneOffset,
-                        endZoneOffset = it.endZoneOffset,
-                        metadata = it.metadata
-                    )
-                }
-            }.sortedBy { it.startTime }
+                val first = list.first()
+                StepsRecord(
+                    startTime = start,
+                    endTime = start.plus(1, ChronoUnit.DAYS),
+                    count = list.sumOf { it.count },
+                    startZoneOffset = first.startZoneOffset,
+                    endZoneOffset = first.endZoneOffset,
+                    metadata = first.metadata
+                )
+            }.sortedBy { it.startTime }.takeLast(selectedRange.days.toInt())
+        }
+    }
+
+    val sleepProcessed = remember(rawSleepSessions, selectedRange) {
+        if (selectedRange == TimeRange.Last24h) {
+            rawSleepSessions
+        } else {
+            rawSleepSessions.groupBy { 
+                it.endTime.atZone(ZoneId.systemDefault()).toLocalDate()
+            }.map { (date, list) ->
+                val first = list.first()
+                val totalDurationMillis = list.sumOf { Duration.between(it.startTime, it.endTime).toMillis() }
+                val startOfDay = date.atStartOfDay(ZoneId.systemDefault()).toInstant()
+                SleepSessionRecord(
+                    startTime = startOfDay,
+                    endTime = startOfDay.plusMillis(totalDurationMillis),
+                    startZoneOffset = first.startZoneOffset,
+                    endZoneOffset = first.endZoneOffset,
+                    metadata = first.metadata
+                )
+            }.sortedBy { it.startTime }.takeLast(selectedRange.days.toInt())
         }
     }
 
@@ -148,7 +168,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                     beatsPerMinute = list.map { it.beatsPerMinute }.average().toLong(),
                     metadata = first.metadata
                 )
-            }.sortedBy { it.time }
+            }.sortedBy { it.time }.takeLast(selectedRange.days.toInt())
         }
     }
 
@@ -166,7 +186,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                     heartRateVariabilityMillis = list.map { it.heartRateVariabilityMillis }.average(),
                     metadata = first.metadata
                 )
-            }.sortedBy { it.time }
+            }.sortedBy { it.time }.takeLast(selectedRange.days.toInt())
         }
     }
 
@@ -195,12 +215,17 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         isLoading = true
         try {
             val endTime = Instant.now()
-            val startTime = endTime.minus(range.days, ChronoUnit.DAYS)
+            val startTime = if (range == TimeRange.Last24h) {
+                endTime.minus(24, ChronoUnit.HOURS)
+            } else {
+                LocalDate.now().minusDays(range.days)
+                    .atStartOfDay(ZoneId.systemDefault()).toInstant()
+            }
             val timeFilter = TimeRangeFilter.between(startTime, endTime)
 
             weights = fetchAllPages(WeightRecord::class, timeFilter).sortedBy { it.time }
             rawSteps = fetchAllPages(StepsRecord::class, timeFilter).sortedBy { it.startTime }
-            sleepSessions = fetchAllPages(SleepSessionRecord::class, timeFilter).sortedBy { it.startTime }
+            rawSleepSessions = fetchAllPages(SleepSessionRecord::class, timeFilter).sortedBy { it.startTime }
             restingHeartRateRecords = fetchAllPages(RestingHeartRateRecord::class, timeFilter).sortedBy { it.time }
             hrvRecords = fetchAllPages(HeartRateVariabilityRmssdRecord::class, timeFilter).sortedBy { it.time }
 
@@ -236,12 +261,22 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             )
             todayRestingHeartRate = rhrRecords.maxByOrNull { it.time }?.beatsPerMinute
 
-            // HRV today
-            val hrvTodayRecords = fetchAllPages(
+            // HRV 7-day average vs 30-day baseline for color coding
+            val hrv7DayRecords = fetchAllPages(
                 HeartRateVariabilityRmssdRecord::class,
-                TimeRangeFilter.between(now.minus(24, ChronoUnit.HOURS), now)
+                TimeRangeFilter.between(now.minus(7, ChronoUnit.DAYS), now)
             )
-            todayHrv = hrvTodayRecords.maxByOrNull { it.time }?.heartRateVariabilityMillis
+            hrv7DayAvg = if (hrv7DayRecords.isNotEmpty()) {
+                hrv7DayRecords.map { it.heartRateVariabilityMillis }.average()
+            } else null
+
+            val hrv30DayRecords = fetchAllPages(
+                HeartRateVariabilityRmssdRecord::class,
+                TimeRangeFilter.between(now.minus(30, ChronoUnit.DAYS), now)
+            )
+            hrvHistoricalAvg = if (hrv30DayRecords.isNotEmpty()) {
+                hrv30DayRecords.map { it.heartRateVariabilityMillis }.average()
+            } else null
             
         } catch (e: Exception) {
             e.printStackTrace()
@@ -289,7 +324,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                     .verticalScroll(scrollState)
             ) {
                 if (selectedTab == DashboardTab.Today) {
-                    TodayView(todaySteps, lastNightSleepDuration, todayRestingHeartRate, todayHrv)
+                    TodayView(todaySteps, lastNightSleepDuration, todayRestingHeartRate, hrv7DayAvg, hrvHistoricalAvg)
                 } else {
                     HistoricalView(
                         selectedRange = selectedRange,
@@ -297,7 +332,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                         isLoading = isLoading,
                         weights = weights,
                         stepsProcessed = stepsProcessed,
-                        sleepSessions = sleepSessions,
+                        sleepProcessed = sleepProcessed,
                         restingHeartRateProcessed = rhrProcessed,
                         hrvProcessed = hrvProcessed
                     )
@@ -312,7 +347,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
 }
 
 @Composable
-fun TodayView(steps: Long, sleepDuration: Duration?, restingHeartRate: Long?, hrv: Double?) {
+fun TodayView(steps: Long, sleepDuration: Duration?, restingHeartRate: Long?, hrvAvg: Double?, hrvBaseline: Double?) {
     SummaryCard(
         title = "Steps Today",
         value = steps.toString(),
@@ -355,11 +390,21 @@ fun TodayView(steps: Long, sleepDuration: Duration?, restingHeartRate: Long?, hr
 
     Spacer(modifier = Modifier.height(12.dp))
 
+    val hrvValueColor = if (hrvAvg != null && hrvBaseline != null) {
+        val ratio = hrvAvg / hrvBaseline
+        when {
+            ratio < 0.8 -> Color(0xFFF44336)        // Rouge : Trop bas (< 80%)
+            ratio < 0.9 || ratio > 1.2 -> Color(0xFFFFB300) // Jaune : Déséquilibré (bas ou anormalement haut)
+            else -> Color(0xFF4CAF50)               // Vert : Balanced (90% - 120%)
+        }
+    } else MaterialTheme.colorScheme.onSurfaceVariant
+
     SummaryCard(
-        title = "HRV Today",
-        value = hrv?.let { "${it.toInt()} ms" } ?: "No data",
+        title = "HRV (7d Avg)",
+        value = hrvAvg?.let { "${it.toInt()} ms" } ?: "No data",
         containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        valueColor = hrvValueColor
     )
 }
 
@@ -404,7 +449,7 @@ fun HistoricalView(
     isLoading: Boolean,
     weights: List<WeightRecord>,
     stepsProcessed: List<StepsRecord>,
-    sleepSessions: List<SleepSessionRecord>,
+    sleepProcessed: List<SleepSessionRecord>,
     restingHeartRateProcessed: List<RestingHeartRateRecord>,
     hrvProcessed: List<HeartRateVariabilityRmssdRecord>
 ) {
@@ -426,10 +471,10 @@ fun HistoricalView(
         }
     } else {
         Text("Sleep History (Hours)", style = MaterialTheme.typography.titleMedium)
-        if (sleepSessions.isNotEmpty()) {
+        if (sleepProcessed.isNotEmpty()) {
             HealthChart(
                 handler = SleepHandler, 
-                records = sleepSessions, 
+                records = sleepProcessed,
                 selectedRange = selectedRange,
                 isColumnChart = true,
                 thresholdValue = 7f
