@@ -24,6 +24,7 @@ import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.RestingHeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
+import androidx.health.connect.client.records.Vo2MaxRecord
 import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.request.ReadRecordsRequest
@@ -56,7 +57,8 @@ class MainActivity : ComponentActivity() {
         StepsHandler,
         SleepHandler, 
         RestingHeartRateHandler, 
-        HeartRateVariabilityHandler
+        HeartRateVariabilityHandler,
+        Vo2MaxHandler
     )
     
     private val permissions = handlers.map { 
@@ -89,6 +91,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     var rawSleepSessions by remember { mutableStateOf<List<SleepSessionRecord>>(emptyList()) }
     var restingHeartRateRecords by remember { mutableStateOf<List<RestingHeartRateRecord>>(emptyList()) }
     var hrvRecords by remember { mutableStateOf<List<HeartRateVariabilityRmssdRecord>>(emptyList()) }
+    var vo2MaxRecords by remember { mutableStateOf<List<Vo2MaxRecord>>(emptyList()) }
     
     var todaySteps by remember { mutableLongStateOf(0L) }
     var lastNightSleepDuration by remember { mutableStateOf<Duration?>(null) }
@@ -193,6 +196,24 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         }
     }
 
+    val vo2MaxProcessed = remember(vo2MaxRecords, selectedRange) {
+        if (selectedRange == TimeRange.Last24h) {
+            vo2MaxRecords
+        } else {
+            vo2MaxRecords.groupBy { 
+                it.time.atZone(ZoneId.systemDefault()).toLocalDate()
+            }.map { (date, list) ->
+                val first = list.first()
+                Vo2MaxRecord(
+                    time = date.atStartOfDay(ZoneId.systemDefault()).toInstant(),
+                    zoneOffset = first.zoneOffset,
+                    vo2MillilitersPerMinuteKilogram = list.map { it.vo2MillilitersPerMinuteKilogram }.average(),
+                    metadata = first.metadata
+                )
+            }.sortedBy { it.time }.takeLast(selectedRange.days.toInt())
+        }
+    }
+
     val requestPermissionLauncher = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract()
     ) { granted ->
@@ -232,6 +253,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             rawSleepSessions = fetchAllPages(SleepSessionRecord::class, timeFilter).sortedBy { it.startTime }
             restingHeartRateRecords = fetchAllPages(RestingHeartRateRecord::class, timeFilter).sortedBy { it.time }
             hrvRecords = fetchAllPages(HeartRateVariabilityRmssdRecord::class, timeFilter).sortedBy { it.time }
+            vo2MaxRecords = fetchAllPages(Vo2MaxRecord::class, timeFilter).sortedBy { it.time }
 
         } catch (e: Exception) {
             e.printStackTrace()
@@ -339,7 +361,8 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                         stepsProcessed = stepsProcessed,
                         sleepProcessed = sleepProcessed,
                         restingHeartRateProcessed = rhrProcessed,
-                        hrvProcessed = hrvProcessed
+                        hrvProcessed = hrvProcessed,
+                        vo2MaxProcessed = vo2MaxProcessed
                     )
                 }
                 Spacer(modifier = Modifier.height(16.dp))
@@ -457,7 +480,8 @@ fun HistoricalView(
     stepsProcessed: List<StepsRecord>,
     sleepProcessed: List<SleepSessionRecord>,
     restingHeartRateProcessed: List<RestingHeartRateRecord>,
-    hrvProcessed: List<HeartRateVariabilityRmssdRecord>
+    hrvProcessed: List<HeartRateVariabilityRmssdRecord>,
+    vo2MaxProcessed: List<Vo2MaxRecord>
 ) {
     SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
         TimeRange.entries.forEachIndexed { index, range ->
@@ -515,6 +539,20 @@ fun HistoricalView(
             )
         } else {
             Text("No HRV data found.", modifier = Modifier.padding(vertical = 8.dp))
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        Text("VO2 Max History", style = MaterialTheme.typography.titleMedium)
+        if (vo2MaxProcessed.isNotEmpty()) {
+            HealthChart(
+                handler = Vo2MaxHandler, 
+                records = vo2MaxProcessed,
+                selectedRange = selectedRange,
+                isColumnChart = false
+            )
+        } else {
+            Text("No VO2 Max data found.", modifier = Modifier.padding(vertical = 8.dp))
         }
 
         Spacer(modifier = Modifier.height(32.dp))
