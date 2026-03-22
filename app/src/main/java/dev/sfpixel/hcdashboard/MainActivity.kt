@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -19,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.records.BodyFatRecord
+import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateVariabilityRmssdRecord
 import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.RestingHeartRateRecord
@@ -33,6 +35,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 
 enum class TimeRange(val label: String, val days: Long) {
@@ -45,7 +48,8 @@ enum class TimeRange(val label: String, val days: Long) {
 
 enum class DashboardTab(val title: String) {
     Today("Today"),
-    History("History")
+    History("History"),
+    Activities("Activities")
 }
 
 class MainActivity : ComponentActivity() {
@@ -62,7 +66,9 @@ class MainActivity : ComponentActivity() {
     
     private val permissions = handlers.map { 
         androidx.health.connect.client.permission.HealthPermission.getReadPermission(it.recordType) 
-    }.toSet() + androidx.health.connect.client.permission.HealthPermission.PERMISSION_READ_HEALTH_DATA_HISTORY
+    }.toSet() + 
+            androidx.health.connect.client.permission.HealthPermission.getReadPermission(ExerciseSessionRecord::class) +
+            androidx.health.connect.client.permission.HealthPermission.PERMISSION_READ_HEALTH_DATA_HISTORY
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,6 +98,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     var restingHeartRateRecords by remember { mutableStateOf<List<RestingHeartRateRecord>>(emptyList()) }
     var hrvRecords by remember { mutableStateOf<List<HeartRateVariabilityRmssdRecord>>(emptyList()) }
     var vo2MaxRecords by remember { mutableStateOf<List<Vo2MaxRecord>>(emptyList()) }
+    var exerciseSessions by remember { mutableStateOf<List<ExerciseSessionRecord>>(emptyList()) }
     
     var todaySteps by remember { mutableLongStateOf(0L) }
     var lastNightSleepDuration by remember { mutableStateOf<Duration?>(null) }
@@ -103,6 +110,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     var selectedRange by remember { mutableStateOf(TimeRange.Last7Days) }
     var selectedTab by remember { mutableStateOf(DashboardTab.Today) }
     var isLoading by remember { mutableStateOf(false) }
+    var selectedActivity by remember { mutableStateOf<ExerciseSessionRecord?>(null) }
     
     val scrollState = rememberScrollState()
 
@@ -254,6 +262,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             restingHeartRateRecords = fetchAllPages(RestingHeartRateRecord::class, timeFilter).sortedBy { it.time }
             hrvRecords = fetchAllPages(HeartRateVariabilityRmssdRecord::class, timeFilter).sortedBy { it.time }
             vo2MaxRecords = fetchAllPages(Vo2MaxRecord::class, timeFilter).sortedBy { it.time }
+            exerciseSessions = fetchAllPages(ExerciseSessionRecord::class, timeFilter).sortedByDescending { it.startTime }
 
         } catch (e: Exception) {
             e.printStackTrace()
@@ -313,6 +322,11 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         val granted = client.permissionController.getGrantedPermissions()
         if (granted.containsAll(permissions)) {
             isAuthorized = true
+            
+            if (selectedTab == DashboardTab.Activities && selectedRange == TimeRange.Last24h) {
+                selectedRange = TimeRange.Last7Days
+            }
+
             if (selectedTab == DashboardTab.Today) {
                 loadTodayData()
             } else {
@@ -349,21 +363,33 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                     .fillMaxSize()
                     .verticalScroll(scrollState)
             ) {
-                if (selectedTab == DashboardTab.Today) {
-                    TodayView(todaySteps, lastNightSleepDuration, todayRestingHeartRate, hrv7DayAvg, hrvHistoryAvg)
-                } else {
-                    HistoryView(
-                        selectedRange = selectedRange,
-                        onRangeSelected = { selectedRange = it },
-                        isLoading = isLoading,
-                        weights = weights,
-                        bodyFats = bodyFats,
-                        stepsProcessed = stepsProcessed,
-                        sleepProcessed = sleepProcessed,
-                        restingHeartRateProcessed = rhrProcessed,
-                        hrvProcessed = hrvProcessed,
-                        vo2MaxProcessed = vo2MaxProcessed
-                    )
+                when (selectedTab) {
+                    DashboardTab.Today -> {
+                        TodayView(todaySteps, lastNightSleepDuration, todayRestingHeartRate, hrv7DayAvg, hrvHistoryAvg)
+                    }
+                    DashboardTab.History -> {
+                        HistoryView(
+                            selectedRange = selectedRange,
+                            onRangeSelected = { selectedRange = it },
+                            isLoading = isLoading,
+                            weights = weights,
+                            bodyFats = bodyFats,
+                            stepsProcessed = stepsProcessed,
+                            sleepProcessed = sleepProcessed,
+                            restingHeartRateProcessed = rhrProcessed,
+                            hrvProcessed = hrvProcessed,
+                            vo2MaxProcessed = vo2MaxProcessed
+                        )
+                    }
+                    DashboardTab.Activities -> {
+                        ActivitiesView(
+                            selectedRange = selectedRange,
+                            onRangeSelected = { selectedRange = it },
+                            isLoading = isLoading,
+                            exerciseSessions = exerciseSessions,
+                            onActivityClick = { selectedActivity = it }
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
             }
@@ -371,6 +397,32 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             Text("Please authorize access to Health Connect.")
             Button(onClick = { requestPermissionLauncher.launch(permissions) }) { Text("Authorize") }
         }
+    }
+
+    if (selectedActivity != null) {
+        AlertDialog(
+            onDismissRequest = { selectedActivity = null },
+            title = { Text(selectedActivity?.title ?: ExerciseHandler.getExerciseName(selectedActivity?.exerciseType ?: 0)) },
+            text = {
+                Column {
+                    Text("Start: ${selectedActivity?.startTime?.atZone(ZoneId.systemDefault())?.format(DateTimeFormatter.ofPattern("MMM d, HH:mm"))}")
+                    Text("End: ${selectedActivity?.endTime?.atZone(ZoneId.systemDefault())?.format(DateTimeFormatter.ofPattern("MMM d, HH:mm"))}")
+                    val duration = Duration.between(selectedActivity!!.startTime, selectedActivity!!.endTime)
+                    Text("Duration: ${ExerciseHandler.formatDuration(duration)}")
+                    selectedActivity?.notes?.let {
+                        if (it.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Notes: $it")
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { selectedActivity = null }) {
+                    Text("Close")
+                }
+            }
+        )
     }
 }
 
@@ -580,6 +632,88 @@ fun HistoryView(
             HealthChart(handler = StepsHandler, records = stepsProcessed, selectedRange = selectedRange, isColumnChart = true)
         } else {
             Text("No activity data found.", modifier = Modifier.padding(vertical = 8.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ActivitiesView(
+    selectedRange: TimeRange,
+    onRangeSelected: (TimeRange) -> Unit,
+    isLoading: Boolean,
+    exerciseSessions: List<ExerciseSessionRecord>,
+    onActivityClick: (ExerciseSessionRecord) -> Unit
+) {
+    val activityRanges = TimeRange.entries.filter { it != TimeRange.Last24h }
+    
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        activityRanges.forEachIndexed { index, range ->
+            SegmentedButton(
+                selected = selectedRange == range,
+                onClick = { onRangeSelected(range) },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = activityRanges.size)
+            ) { Text(range.label) }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(24.dp))
+
+    if (isLoading) {
+        Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+    } else {
+        if (exerciseSessions.isEmpty()) {
+            Text("No activities found.", modifier = Modifier.padding(vertical = 8.dp))
+        } else {
+            exerciseSessions.forEach { session ->
+                ActivityTile(session, onClick = { onActivityClick(session) })
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun ActivityTile(session: ExerciseSessionRecord, onClick: () -> Unit) {
+    val duration = Duration.between(session.startTime, session.endTime)
+    val durationText = ExerciseHandler.formatDuration(duration)
+    
+    val startTime = session.startTime.atZone(ZoneId.systemDefault())
+    val formatter = DateTimeFormatter.ofPattern("MMM d, HH:mm")
+    
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(
+                    text = session.title ?: ExerciseHandler.getExerciseName(session.exerciseType),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = startTime.format(formatter),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Text(
+                text = durationText,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
         }
     }
 }
