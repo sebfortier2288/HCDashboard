@@ -8,8 +8,6 @@ on:
       - 'LICENSE'
       - '**.md'
       - '.github/**'
-      - 'GitVersion.yml'
-
 jobs:
   check:
     name: Build and Test
