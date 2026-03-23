@@ -8,6 +8,7 @@ on:
       - 'LICENSE'
       - '**.md'
       - '.github/**'
+      - 'GitVersion.yml'
   workflow_dispatch:
 
 jobs:
