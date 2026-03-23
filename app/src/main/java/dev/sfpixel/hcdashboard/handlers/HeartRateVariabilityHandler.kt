@@ -1,4 +1,4 @@
-package dev.sfpixel.hcdashboard
+package dev.sfpixel.hcdashboard.handlers
 
 import androidx.health.connect.client.records.HeartRateVariabilityRmssdRecord
 import java.time.Instant

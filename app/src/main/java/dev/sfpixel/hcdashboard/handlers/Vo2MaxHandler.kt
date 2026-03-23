@@ -1,4 +1,4 @@
-package dev.sfpixel.hcdashboard
+package dev.sfpixel.hcdashboard.handlers
 
 import androidx.health.connect.client.records.Vo2MaxRecord
 import java.time.Instant
