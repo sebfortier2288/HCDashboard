@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
@@ -18,6 +19,7 @@ import androidx.health.connect.client.records.*
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import dev.sfpixel.hcdashboard.handlers.*
+import dev.sfpixel.hcdashboard.ui.HealthChart
 import dev.sfpixel.hcdashboard.ui.theme.HCDashboardTheme
 import dev.sfpixel.hcdashboard.ui.views.ActivitiesView
 import dev.sfpixel.hcdashboard.ui.views.HistoryView
@@ -115,6 +117,7 @@ class MainActivity : ComponentActivity() {
         androidx.health.connect.client.permission.HealthPermission.getReadPermission(it.recordType) 
     }.toSet() + 
             androidx.health.connect.client.permission.HealthPermission.getReadPermission(ExerciseSessionRecord::class) +
+            androidx.health.connect.client.permission.HealthPermission.getReadPermission(HeartRateRecord::class) +
             androidx.health.connect.client.permission.HealthPermission.PERMISSION_READ_HEALTH_DATA_HISTORY
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -158,6 +161,8 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     var selectedTab by remember { mutableStateOf(DashboardTab.Today) }
     var isLoading by remember { mutableStateOf(false) }
     val selectedActivityState = remember { mutableStateOf<ExerciseSessionRecord?>(null) }
+    var activityHeartRateSamples by remember { mutableStateOf<List<HeartRateRecord>>(emptyList()) }
+    var isHeartRateLoading by remember { mutableStateOf(false) }
     
     var activityPeriod by remember { mutableStateOf(ActivityPeriodType.Week) }
     var activityOffset by remember { mutableLongStateOf(0L) }
@@ -393,6 +398,50 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         }
     }
 
+    LaunchedEffect(selectedActivityState.value) {
+        val session = selectedActivityState.value
+        if (session != null) {
+            isHeartRateLoading = true
+            try {
+                // To handle "grouped" records from apps like Health Sync, 
+                // we query the entire day of the activity.
+                val sessionDate = session.startTime.atZone(ZoneId.systemDefault()).toLocalDate()
+                val dayStart = sessionDate.atStartOfDay(ZoneId.systemDefault()).toInstant()
+                val dayEnd = dayStart.plus(1, ChronoUnit.DAYS)
+                
+                val allDayRecords = fetchAllPages(
+                    HeartRateRecord::class,
+                    TimeRangeFilter.between(dayStart, dayEnd)
+                )
+                
+                // Then we filter the samples that fall WITHIN the session duration
+                activityHeartRateSamples = allDayRecords.flatMap { record ->
+                    record.samples.filter { sample ->
+                        sample.time >= session.startTime && sample.time <= session.endTime
+                    }.map { sample ->
+                        // Wrap each sample in a Record so the chart can handle it
+                        HeartRateRecord(
+                            startTime = sample.time,
+                            endTime = sample.time,
+                            startZoneOffset = record.startZoneOffset,
+                            endZoneOffset = record.endZoneOffset,
+                            samples = listOf(sample),
+                            metadata = record.metadata
+                        )
+                    }
+                }.sortedBy { it.startTime }
+                
+            } catch (e: Exception) {
+                e.printStackTrace()
+                activityHeartRateSamples = emptyList()
+            } finally {
+                isHeartRateLoading = false
+            }
+        } else {
+            activityHeartRateSamples = emptyList()
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -464,11 +513,32 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             onDismissRequest = { selectedActivityState.value = null },
             title = { Text(selectedActivity.title ?: ExerciseHandler.getExerciseName(selectedActivity.exerciseType)) },
             text = {
-                Column {
+                Column(modifier = Modifier.fillMaxWidth()) {
                     Text("Start: ${selectedActivity.startTime.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MMM d, HH:mm"))}")
                     Text("End: ${selectedActivity.endTime.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MMM d, HH:mm"))}")
                     val duration = Duration.between(selectedActivity.startTime, selectedActivity.endTime)
                     Text("Duration: ${ExerciseHandler.formatDuration(duration)}")
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Heart Rate", style = MaterialTheme.typography.titleSmall)
+                    
+                    if (isHeartRateLoading) {
+                        Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    } else if (activityHeartRateSamples.isNotEmpty()) {
+                        HealthChart(
+                            handler = HeartRateHandler,
+                            records = activityHeartRateSamples,
+                            selectedRange = TimeRange.Last24h,
+                            modifier = Modifier.height(200.dp)
+                        )
+                    } else {
+                        Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                            Text("No heart rate data found for this activity duration.", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+
                     selectedActivity.notes?.let {
                         if (it.isNotBlank()) {
                             Spacer(modifier = Modifier.height(8.dp))
