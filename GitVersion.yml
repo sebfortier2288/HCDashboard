@@ -1,0 +1,11 @@
+workflow: Mainline
+mode: ContinuousDelivery
+branches:
+  main:
+    regex: ^main$
+    increment: Patch
+    prevent-increment-of-merged-version: false
+    track-merge-target: false
+    tag: ''
+ignore:
+  sha: []
