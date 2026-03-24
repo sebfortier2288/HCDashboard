@@ -35,7 +35,7 @@ import com.patrykandpatrick.vico.core.common.data.ExtraStore
 import com.patrykandpatrick.vico.core.common.component.LineComponent
 import com.patrykandpatrick.vico.core.common.shape.DashedShape
 import com.patrykandpatrick.vico.core.common.shape.Shape
-import dev.sfpixel.hcdashboard.TimeRange
+import dev.sfpixel.hcdashboard.PeriodType
 import dev.sfpixel.hcdashboard.handlers.HealthDataHandler
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -44,11 +44,13 @@ import java.time.format.DateTimeFormatter
 fun <T : Record> HealthChart(
     handler: HealthDataHandler<T>,
     records: List<T>,
-    selectedRange: TimeRange,
+    periodType: PeriodType,
     modifier: Modifier = Modifier,
     isColumnChart: Boolean = false,
     thresholdValue: Float? = null
 ) {
+    if (records.isEmpty()) return
+
     val labelColor = MaterialTheme.colorScheme.onSurface
     val lineColor = MaterialTheme.colorScheme.outlineVariant
     val thresholdColor = MaterialTheme.colorScheme.error.copy(alpha = 0.6f)
@@ -162,14 +164,16 @@ fun <T : Record> HealthChart(
                 label = axisLabelComponent,
                 line = axisLineComponent,
                 tick = axisTickComponent,
+                itemPlacer = remember(periodType, records.size) {
+                    HorizontalAxis.ItemPlacer.aligned(spacing = { 1 }, addExtremeLabelPadding = true)
+                },
                 title = "Date",
                 titleComponent = rememberTextComponent(color = labelColor),
                 valueFormatter = CartesianValueFormatter { _, value, _ ->
                     val index = value.toInt().coerceIn(records.indices)
                     val timestamp = handler.getRecordTimestamp(records[index])
-                    val pattern = when (selectedRange) {
-                        TimeRange.Last24h -> "HH:mm"
-                        TimeRange.LastYear, TimeRange.AllTime -> "dd/MM/yy"
+                    val pattern = when (periodType) {
+                        PeriodType.Year -> "MMM"
                         else -> "dd/MM"
                     }
                     DateTimeFormatter.ofPattern(pattern)

@@ -34,44 +34,36 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 
-enum class TimeRange(val label: String, val days: Long) {
-    Last24h("24h", 1),
-    Last7Days("7d", 7),
-    Last30Days("30d", 30),
-    LastYear("1y", 365),
-    AllTime("All", 3650)
-}
-
 enum class DashboardTab(val title: String) {
     Today("Today"),
     History("History"),
     Activities("Activities")
 }
 
-enum class ActivityPeriodType(val label: String) {
+enum class PeriodType(val label: String) {
     Week("Week"),
     Month("Month"),
     Year("Year")
 }
 
-fun calculatePeriodRange(periodType: ActivityPeriodType, offset: Long): Pair<Instant, Instant> {
+fun calculatePeriodRange(periodType: PeriodType, offset: Long): Pair<Instant, Instant> {
     val zone = ZoneId.systemDefault()
     val now = LocalDate.now()
     
     return when (periodType) {
-        ActivityPeriodType.Week -> {
+        PeriodType.Week -> {
             val baseDate = now.plusWeeks(offset)
             val start = baseDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY)).atStartOfDay(zone).toInstant()
             val end = start.plus(7, ChronoUnit.DAYS)
             start to end
         }
-        ActivityPeriodType.Month -> {
+        PeriodType.Month -> {
             val baseDate = now.plusMonths(offset)
             val start = baseDate.with(TemporalAdjusters.firstDayOfMonth()).atStartOfDay(zone).toInstant()
             val end = baseDate.with(TemporalAdjusters.lastDayOfMonth()).plusDays(1).atStartOfDay(zone).toInstant()
             start to end
         }
-        ActivityPeriodType.Year -> {
+        PeriodType.Year -> {
             val baseDate = now.plusYears(offset)
             val start = baseDate.with(TemporalAdjusters.firstDayOfYear()).atStartOfDay(zone).toInstant()
             val end = baseDate.with(TemporalAdjusters.lastDayOfYear()).plusDays(1).atStartOfDay(zone).toInstant()
@@ -80,11 +72,11 @@ fun calculatePeriodRange(periodType: ActivityPeriodType, offset: Long): Pair<Ins
     }
 }
 
-fun formatPeriodLabel(periodType: ActivityPeriodType, offset: Long): String {
+fun formatPeriodLabel(periodType: PeriodType, offset: Long): String {
     val now = LocalDate.now()
     
     return when (periodType) {
-        ActivityPeriodType.Week -> {
+        PeriodType.Week -> {
             val baseDate = now.plusWeeks(offset)
             val start = baseDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
             val end = start.plusDays(6)
@@ -95,11 +87,11 @@ fun formatPeriodLabel(periodType: ActivityPeriodType, offset: Long): String {
                 "${start.format(formatter)} ${start.year} - ${end.format(formatter)} ${end.year}"
             }
         }
-        ActivityPeriodType.Month -> {
+        PeriodType.Month -> {
             val baseDate = now.plusMonths(offset)
             baseDate.format(DateTimeFormatter.ofPattern("MMMM yyyy"))
         }
-        ActivityPeriodType.Year -> {
+        PeriodType.Year -> {
             val baseDate = now.plusYears(offset)
             baseDate.year.toString()
         }
@@ -151,13 +143,13 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     val birthDate by userPreferences.birthDate.collectAsState(initial = null)
     val scope = rememberCoroutineScope()
     
-    var weights by remember { mutableStateOf<List<WeightRecord>>(emptyList()) }
-    var bodyFats by remember { mutableStateOf<List<BodyFatRecord>>(emptyList()) }
+    var rawWeights by remember { mutableStateOf<List<WeightRecord>>(emptyList()) }
+    var rawBodyFats by remember { mutableStateOf<List<BodyFatRecord>>(emptyList()) }
     var rawSteps by remember { mutableStateOf<List<StepsRecord>>(emptyList()) }
     var rawSleepSessions by remember { mutableStateOf<List<SleepSessionRecord>>(emptyList()) }
-    var restingHeartRateRecords by remember { mutableStateOf<List<RestingHeartRateRecord>>(emptyList()) }
-    var hrvRecords by remember { mutableStateOf<List<HeartRateVariabilityRmssdRecord>>(emptyList()) }
-    var vo2MaxRecords by remember { mutableStateOf<List<Vo2MaxRecord>>(emptyList()) }
+    var rawRestingHeartRateRecords by remember { mutableStateOf<List<RestingHeartRateRecord>>(emptyList()) }
+    var rawHrvRecords by remember { mutableStateOf<List<HeartRateVariabilityRmssdRecord>>(emptyList()) }
+    var rawVo2MaxRecords by remember { mutableStateOf<List<Vo2MaxRecord>>(emptyList()) }
     var exerciseSessions by remember { mutableStateOf<List<ExerciseSessionRecord>>(emptyList()) }
     
     var todaySteps by remember { mutableLongStateOf(0L) }
@@ -168,81 +160,72 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     var intensityMinutesWeek by remember { mutableLongStateOf(0L) }
     
     var isAuthorized by remember { mutableStateOf(false) }
-    var selectedRange by remember { mutableStateOf(TimeRange.Last7Days) }
+    var historyPeriod by remember { mutableStateOf(PeriodType.Week) }
+    var historyOffset by remember { mutableLongStateOf(0L) }
+    var activityPeriod by remember { mutableStateOf(PeriodType.Week) }
+    var activityOffset by remember { mutableLongStateOf(0L) }
+    
     var selectedTab by remember { mutableStateOf(DashboardTab.Today) }
     var isLoading by remember { mutableStateOf(false) }
     val selectedActivityState = remember { mutableStateOf<ExerciseSessionRecord?>(null) }
     var activityHeartRateSamples by remember { mutableStateOf<List<HeartRateRecord>>(emptyList()) }
     var isHeartRateLoading by remember { mutableStateOf(false) }
-    
-    var activityPeriod by remember { mutableStateOf(ActivityPeriodType.Week) }
-    var activityOffset by remember { mutableLongStateOf(0L) }
 
     val showSettingsDialog = remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
 
-    val stepsProcessed = remember(rawSteps, selectedRange) {
-        if (selectedRange == TimeRange.Last24h) {
-            rawSteps.groupBy { 
-                it.startTime.atZone(ZoneId.systemDefault()).truncatedTo(ChronoUnit.HOURS).toInstant() 
-            }.map { (time, list) ->
+    fun getGroupingDate(instant: Instant, period: PeriodType): LocalDate {
+        val localDate = instant.atZone(ZoneId.systemDefault()).toLocalDate()
+        return if (period == PeriodType.Year) localDate.withDayOfMonth(1) else localDate
+    }
+
+    val stepsProcessed = remember(rawSteps, historyPeriod) {
+        rawSteps.groupBy { getGroupingDate(it.startTime, historyPeriod) }
+            .map { (date, list) ->
+                val start = date.atStartOfDay(ZoneId.systemDefault()).toInstant()
                 val first = list.first()
+                val totalCount = list.sumOf { it.count }
+                val value = if (historyPeriod == PeriodType.Year) {
+                    val daysInMonth = YearMonth.from(date).lengthOfMonth()
+                    totalCount / daysInMonth.coerceAtLeast(1)
+                } else totalCount
+
                 StepsRecord(
-                    startTime = time,
-                    endTime = time.plus(1, ChronoUnit.HOURS),
-                    count = list.sumOf { it.count },
+                    startTime = start,
+                    endTime = start.plus(1, ChronoUnit.DAYS),
+                    count = value,
                     startZoneOffset = first.startZoneOffset,
                     endZoneOffset = first.endZoneOffset,
                     metadata = first.metadata
                 )
             }.sortedBy { it.startTime }
-        } else {
-            rawSteps.groupBy { 
-                it.startTime.atZone(ZoneId.systemDefault()).toLocalDate()
-            }.map { (date, list) ->
-                val start = date.atStartOfDay(ZoneId.systemDefault()).toInstant()
-                val first = list.first()
-                StepsRecord(
-                    startTime = start,
-                    endTime = start.plus(1, ChronoUnit.DAYS),
-                    count = list.sumOf { it.count },
-                    startZoneOffset = first.startZoneOffset,
-                    endZoneOffset = first.endZoneOffset,
-                    metadata = first.metadata
-                )
-            }.sortedBy { it.startTime }.takeLast(selectedRange.days.toInt())
-        }
     }
 
-    val sleepProcessed = remember(rawSleepSessions, selectedRange) {
-        if (selectedRange == TimeRange.Last24h) {
-            rawSleepSessions
-        } else {
-            rawSleepSessions.groupBy { 
-                it.endTime.atZone(ZoneId.systemDefault()).toLocalDate()
-            }.map { (date, list) ->
+    val sleepProcessed = remember(rawSleepSessions, historyPeriod) {
+        rawSleepSessions.groupBy { getGroupingDate(it.endTime, historyPeriod) }
+            .map { (date, list) ->
                 val first = list.first()
                 val totalDurationMillis = list.sumOf { Duration.between(it.startTime, it.endTime).toMillis() }
+                val value = if (historyPeriod == PeriodType.Year) {
+                    val daysInMonth = YearMonth.from(date).lengthOfMonth()
+                    totalDurationMillis / daysInMonth.coerceAtLeast(1)
+                } else totalDurationMillis
+
                 val startOfDay = date.atStartOfDay(ZoneId.systemDefault()).toInstant()
                 SleepSessionRecord(
                     startTime = startOfDay,
-                    endTime = startOfDay.plusMillis(totalDurationMillis),
+                    endTime = startOfDay.plusMillis(value),
                     startZoneOffset = first.startZoneOffset,
                     endZoneOffset = first.endZoneOffset,
                     metadata = first.metadata
                 )
-            }.sortedBy { it.startTime }.takeLast(selectedRange.days.toInt())
-        }
+            }.sortedBy { it.startTime }
     }
 
-    val rhrProcessed = remember(restingHeartRateRecords, selectedRange) {
-        if (selectedRange == TimeRange.Last24h) {
-            restingHeartRateRecords
-        } else {
-            restingHeartRateRecords.groupBy { 
-                it.time.atZone(ZoneId.systemDefault()).toLocalDate()
-            }.map { (date, list) ->
+    val rhrProcessed = remember(rawRestingHeartRateRecords, historyPeriod) {
+        rawRestingHeartRateRecords.groupBy { getGroupingDate(it.time, historyPeriod) }
+            .map { (date, list) ->
                 val first = list.first()
                 RestingHeartRateRecord(
                     time = date.atStartOfDay(ZoneId.systemDefault()).toInstant(),
@@ -250,17 +233,12 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                     beatsPerMinute = list.map { it.beatsPerMinute }.average().toLong(),
                     metadata = first.metadata
                 )
-            }.sortedBy { it.time }.takeLast(selectedRange.days.toInt())
-        }
+            }.sortedBy { it.time }
     }
 
-    val hrvProcessed = remember(hrvRecords, selectedRange) {
-        if (selectedRange == TimeRange.Last24h) {
-            hrvRecords
-        } else {
-            hrvRecords.groupBy { 
-                it.time.atZone(ZoneId.systemDefault()).toLocalDate()
-            }.map { (date, list) ->
+    val hrvProcessed = remember(rawHrvRecords, historyPeriod) {
+        rawHrvRecords.groupBy { getGroupingDate(it.time, historyPeriod) }
+            .map { (date, list) ->
                 val first = list.first()
                 HeartRateVariabilityRmssdRecord(
                     time = date.atStartOfDay(ZoneId.systemDefault()).toInstant(),
@@ -268,17 +246,12 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                     heartRateVariabilityMillis = list.map { it.heartRateVariabilityMillis }.average(),
                     metadata = first.metadata
                 )
-            }.sortedBy { it.time }.takeLast(selectedRange.days.toInt())
-        }
+            }.sortedBy { it.time }
     }
 
-    val vo2MaxProcessed = remember(vo2MaxRecords, selectedRange) {
-        if (selectedRange == TimeRange.Last24h) {
-            vo2MaxRecords
-        } else {
-            vo2MaxRecords.groupBy { 
-                it.time.atZone(ZoneId.systemDefault()).toLocalDate()
-            }.map { (date, list) ->
+    val vo2MaxProcessed = remember(rawVo2MaxRecords, historyPeriod) {
+        rawVo2MaxRecords.groupBy { getGroupingDate(it.time, historyPeriod) }
+            .map { (date, list) ->
                 val first = list.first()
                 Vo2MaxRecord(
                     time = date.atStartOfDay(ZoneId.systemDefault()).toInstant(),
@@ -286,8 +259,33 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                     vo2MillilitersPerMinuteKilogram = list.map { it.vo2MillilitersPerMinuteKilogram }.average(),
                     metadata = first.metadata
                 )
-            }.sortedBy { it.time }.takeLast(selectedRange.days.toInt())
-        }
+            }.sortedBy { it.time }
+    }
+
+    val weightsProcessed = remember(rawWeights, historyPeriod) {
+        rawWeights.groupBy { getGroupingDate(it.time, historyPeriod) }
+            .map { (date, list) ->
+                val first = list.first()
+                WeightRecord(
+                    time = date.atStartOfDay(ZoneId.systemDefault()).toInstant(),
+                    zoneOffset = first.zoneOffset,
+                    weight = androidx.health.connect.client.units.Mass.kilograms(list.map { it.weight.inKilograms }.average()),
+                    metadata = first.metadata
+                )
+            }.sortedBy { it.time }
+    }
+
+    val bodyFatsProcessed = remember(rawBodyFats, historyPeriod) {
+        rawBodyFats.groupBy { getGroupingDate(it.time, historyPeriod) }
+            .map { (date, list) ->
+                val first = list.first()
+                BodyFatRecord(
+                    time = date.atStartOfDay(ZoneId.systemDefault()).toInstant(),
+                    zoneOffset = first.zoneOffset,
+                    percentage = androidx.health.connect.client.units.Percentage(list.map { it.percentage.value }.average()),
+                    metadata = first.metadata
+                )
+            }.sortedBy { it.time }
     }
 
     val requestPermissionLauncher = rememberLauncherForActivityResult(
@@ -311,7 +309,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         return result
     }
 
-    val loadActivitiesData: suspend (ActivityPeriodType, Long) -> Unit = { periodType, offset ->
+    val loadActivitiesData: suspend (PeriodType, Long) -> Unit = { periodType, offset ->
         isLoading = true
         exerciseSessions = emptyList() // Reset to show loading
         
@@ -326,25 +324,19 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         }
     }
 
-    val loadHistoryData: suspend (TimeRange) -> Unit = { range ->
+    val loadHistoryData: suspend (PeriodType, Long) -> Unit = { periodType, offset ->
         isLoading = true
         try {
-            val endTime = Instant.now()
-            val startTime = if (range == TimeRange.Last24h) {
-                endTime.minus(24, ChronoUnit.HOURS)
-            } else {
-                LocalDate.now().minusDays(range.days)
-                    .atStartOfDay(ZoneId.systemDefault()).toInstant()
-            }
+            val (startTime, endTime) = calculatePeriodRange(periodType, offset)
             val timeFilter = TimeRangeFilter.between(startTime, endTime)
 
-            weights = fetchAllPages(WeightRecord::class, timeFilter).sortedBy { it.time }
-            bodyFats = fetchAllPages(BodyFatRecord::class, timeFilter).sortedBy { it.time }
+            rawWeights = fetchAllPages(WeightRecord::class, timeFilter).sortedBy { it.time }
+            rawBodyFats = fetchAllPages(BodyFatRecord::class, timeFilter).sortedBy { it.time }
             rawSteps = fetchAllPages(StepsRecord::class, timeFilter).sortedBy { it.startTime }
             rawSleepSessions = fetchAllPages(SleepSessionRecord::class, timeFilter).sortedBy { it.startTime }
-            restingHeartRateRecords = fetchAllPages(RestingHeartRateRecord::class, timeFilter).sortedBy { it.time }
-            hrvRecords = fetchAllPages(HeartRateVariabilityRmssdRecord::class, timeFilter).sortedBy { it.time }
-            vo2MaxRecords = fetchAllPages(Vo2MaxRecord::class, timeFilter).sortedBy { it.time }
+            rawRestingHeartRateRecords = fetchAllPages(RestingHeartRateRecord::class, timeFilter).sortedBy { it.time }
+            rawHrvRecords = fetchAllPages(HeartRateVariabilityRmssdRecord::class, timeFilter).sortedBy { it.time }
+            rawVo2MaxRecords = fetchAllPages(Vo2MaxRecord::class, timeFilter).sortedBy { it.time }
 
         } catch (e: Exception) {
             e.printStackTrace()
@@ -413,14 +405,14 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         }
     }
 
-    LaunchedEffect(isAuthorized, selectedRange, activityPeriod, activityOffset, selectedTab, birthDate) {
+    LaunchedEffect(isAuthorized, historyPeriod, historyOffset, activityPeriod, activityOffset, selectedTab, birthDate) {
         val granted = client.permissionController.getGrantedPermissions()
         if (granted.containsAll(permissions)) {
             isAuthorized = true
             
             when (selectedTab) {
                 DashboardTab.Today -> loadTodayData()
-                DashboardTab.History -> loadHistoryData(selectedRange)
+                DashboardTab.History -> loadHistoryData(historyPeriod, historyOffset)
                 DashboardTab.Activities -> loadActivitiesData(activityPeriod, activityOffset)
             }
         }
@@ -521,11 +513,13 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                     }
                     DashboardTab.History -> {
                         HistoryView(
-                            selectedRange = selectedRange,
-                            onRangeSelected = { selectedRange = it },
+                            periodType = historyPeriod,
+                            offset = historyOffset,
+                            onPeriodTypeChanged = { historyPeriod = it },
+                            onOffsetChanged = { historyOffset = it },
                             isLoading = isLoading,
-                            weights = weights,
-                            bodyFats = bodyFats,
+                            weights = weightsProcessed,
+                            bodyFats = bodyFatsProcessed,
                             stepsProcessed = stepsProcessed,
                             sleepProcessed = sleepProcessed,
                             restingHeartRateProcessed = rhrProcessed,
@@ -576,18 +570,8 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    try {
-                        val date = LocalDate.parse(birthDateInput)
-                        scope.launch {
-                            userPreferences.saveBirthDate(date)
-                        }
-                        showSettingsDialog.value = false
-                    } catch (_: Exception) {
-                        // Show error or keep dialog open
-                    }
-                }) {
-                    Text("Save")
+                ConfirmSettingsButton(birthDateInput, userPreferences, scope) {
+                    showSettingsDialog.value = false
                 }
             },
             dismissButton = {
@@ -599,75 +583,110 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     }
 
     selectedActivityState.value?.let { selectedActivity ->
-        AlertDialog(
-            onDismissRequest = { selectedActivityState.value = null },
-            title = { Text(selectedActivity.title ?: ExerciseHandler.getExerciseName(selectedActivity.exerciseType)) },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Text("Start: ${selectedActivity.startTime.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MMM d, HH:mm"))}")
-                    Text("End: ${selectedActivity.endTime.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MMM d, HH:mm"))}")
-                    val duration = Duration.between(selectedActivity.startTime, selectedActivity.endTime)
-                    Text("Duration: ${ExerciseHandler.formatDuration(duration)}")
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Heart Rate", style = MaterialTheme.typography.titleSmall)
-                    
-                    if (isHeartRateLoading) {
-                        Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator()
-                        }
-                    } else if (activityHeartRateSamples.isNotEmpty()) {
-                        HealthChart(
-                            handler = HeartRateHandler,
-                            records = activityHeartRateSamples,
-                            selectedRange = TimeRange.Last24h,
-                            modifier = Modifier.height(200.dp)
-                        )
-                        
-                        birthDate?.let { date ->
-                            val maxHr = HeartRateZoneHandler.calculateMaxHeartRate(date)
-                            val zones = HeartRateZoneHandler.getZones(maxHr)
-                            val calculatedZones = HeartRateZoneHandler.calculateTimeInZones(activityHeartRateSamples, zones)
-                            
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text("Zones HR (Max: $maxHr bpm)", style = MaterialTheme.typography.titleSmall)
-                            calculatedZones.forEach { zone ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text("${zone.name}:", style = MaterialTheme.typography.bodySmall)
-                                    Text(ExerciseHandler.formatDuration(zone.duration), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                            
-                            val intensityMinutes = HeartRateZoneHandler.calculateIntensityMinutes(calculatedZones)
-                            
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("Intensity minutes (Z3+): $intensityMinutes min", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        } ?: run {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("Set your birth date in settings to see HR zones.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                        }
-                    } else {
-                        Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
-                            Text("No heart rate data found for this activity duration.", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+        ActivityDetailDialog(selectedActivity, isHeartRateLoading, activityHeartRateSamples, birthDate) {
+            selectedActivityState.value = null
+        }
+    }
+}
 
-                    selectedActivity.notes?.let {
-                        if (it.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("Notes: $it")
+@Composable
+fun ConfirmSettingsButton(
+    birthDateInput: String,
+    userPreferences: UserPreferences,
+    scope: kotlinx.coroutines.CoroutineScope,
+    onDismiss: () -> Unit
+) {
+    TextButton(onClick = {
+        try {
+            val date = LocalDate.parse(birthDateInput)
+            scope.launch {
+                userPreferences.saveBirthDate(date)
+            }
+            onDismiss()
+        } catch (_: Exception) {
+            // Show error or keep dialog open
+        }
+    }) {
+        Text("Save")
+    }
+}
+
+@Composable
+fun ActivityDetailDialog(
+    selectedActivity: ExerciseSessionRecord,
+    isHeartRateLoading: Boolean,
+    activityHeartRateSamples: List<HeartRateRecord>,
+    birthDate: LocalDate?,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(selectedActivity.title ?: ExerciseHandler.getExerciseName(selectedActivity.exerciseType)) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text("Start: ${selectedActivity.startTime.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MMM d, HH:mm"))}")
+                Text("End: ${selectedActivity.endTime.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MMM d, HH:mm"))}")
+                val duration = Duration.between(selectedActivity.startTime, selectedActivity.endTime)
+                Text("Duration: ${ExerciseHandler.formatDuration(duration)}")
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Heart Rate", style = MaterialTheme.typography.titleSmall)
+                
+                if (isHeartRateLoading) {
+                    Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                } else if (activityHeartRateSamples.isNotEmpty()) {
+                    HealthChart(
+                        handler = HeartRateHandler,
+                        records = activityHeartRateSamples,
+                        periodType = PeriodType.Week, // Dummy value for detail view
+                        modifier = Modifier.height(200.dp)
+                    )
+                    
+                    birthDate?.let { date ->
+                        val maxHr = HeartRateZoneHandler.calculateMaxHeartRate(date)
+                        val zones = HeartRateZoneHandler.getZones(maxHr)
+                        val calculatedZones = HeartRateZoneHandler.calculateTimeInZones(activityHeartRateSamples, zones)
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Zones HR (Max: $maxHr bpm)", style = MaterialTheme.typography.titleSmall)
+                        calculatedZones.forEach { zone ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("${zone.name}:", style = MaterialTheme.typography.bodySmall)
+                                Text(ExerciseHandler.formatDuration(zone.duration), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                            }
                         }
+                        
+                        val intensityMinutes = HeartRateZoneHandler.calculateIntensityMinutes(calculatedZones)
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Intensity minutes (Z3+): $intensityMinutes min", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    } ?: run {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Set your birth date in settings to see HR zones.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                    }
+                } else {
+                    Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                        Text("No heart rate data found for this activity duration.", style = MaterialTheme.typography.bodySmall)
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { selectedActivityState.value = null }) {
-                    Text("Close")
+
+                selectedActivity.notes?.let {
+                    if (it.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Notes: $it")
+                    }
                 }
             }
-        )
-    }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
 }
