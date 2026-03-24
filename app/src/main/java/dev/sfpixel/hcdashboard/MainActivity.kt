@@ -165,7 +165,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     var todayRestingHeartRate by remember { mutableStateOf<Long?>(null) }
     var hrv7DayAvg by remember { mutableStateOf<Double?>(null) }
     var hrvHistoryAvg by remember { mutableStateOf<Double?>(null) }
-    var activeMinutesWeek by remember { mutableLongStateOf(0L) }
+    var intensityMinutesWeek by remember { mutableLongStateOf(0L) }
     
     var isAuthorized by remember { mutableStateOf(false) }
     var selectedRange by remember { mutableStateOf(TimeRange.Last7Days) }
@@ -395,7 +395,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                 hrv30DayRecords.map { it.heartRateVariabilityMillis }.average()
             } else null
 
-            // Active minutes for current week (Sunday to now)
+            // Intensity minutes for current week (Sunday to now)
             val weekStart = LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY)).atStartOfDay(ZoneId.systemDefault()).toInstant()
             val weekHrRecords = fetchAllPages(HeartRateRecord::class, TimeRangeFilter.between(weekStart, now))
 
@@ -403,9 +403,9 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                 val maxHr = HeartRateZoneHandler.calculateMaxHeartRate(date)
                 val zones = HeartRateZoneHandler.getZones(maxHr)
                 val calculatedZones = HeartRateZoneHandler.calculateTimeInZones(weekHrRecords, zones)
-                activeMinutesWeek = HeartRateZoneHandler.calculateActiveMinutes(calculatedZones)
+                intensityMinutesWeek = HeartRateZoneHandler.calculateIntensityMinutes(calculatedZones)
             } ?: run {
-                activeMinutesWeek = 0L
+                intensityMinutesWeek = 0L
             }
             
         } catch (e: Exception) {
@@ -517,7 +517,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             ) {
                 when (selectedTab) {
                     DashboardTab.Today -> {
-                        TodayView(todaySteps, lastNightSleepDuration, todayRestingHeartRate, hrv7DayAvg, hrvHistoryAvg, activeMinutesWeek)
+                        TodayView(todaySteps, lastNightSleepDuration, todayRestingHeartRate, hrv7DayAvg, hrvHistoryAvg, intensityMinutesWeek)
                     }
                     DashboardTab.History -> {
                         HistoryView(
@@ -641,10 +641,10 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                                 }
                             }
                             
-                            val activeMinutes = HeartRateZoneHandler.calculateActiveMinutes(calculatedZones)
+                            val intensityMinutes = HeartRateZoneHandler.calculateIntensityMinutes(calculatedZones)
                             
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("Active minutes (Z3+): $activeMinutes min", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Text("Intensity minutes (Z3+): $intensityMinutes min", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         } ?: run {
                             Spacer(modifier = Modifier.height(8.dp))
                             Text("Set your birth date in settings to see HR zones.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)

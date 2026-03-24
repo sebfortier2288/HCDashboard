@@ -62,7 +62,7 @@ object HeartRateZoneHandler {
         return zones
     }
 
-    fun calculateActiveMinutes(zones: List<HeartRateZone>): Long {
+    fun calculateIntensityMinutes(zones: List<HeartRateZone>): Long {
         return zones.sumOf { zone ->
             val minutes = zone.duration.toMinutes()
             when {

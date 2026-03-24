@@ -18,7 +18,7 @@ fun TodayView(
     restingHeartRate: Long?,
     hrvAvg: Double?,
     hrvBaseline: Double?,
-    activeMinutesWeek: Long
+    intensityMinutesWeek: Long
 ) {
     val sleepText = sleepDuration?.let {
         val hours = it.toHours()
@@ -44,18 +44,18 @@ fun TodayView(
 
     Spacer(modifier = Modifier.height(12.dp))
 
-    val activeMinColor = when {
-        activeMinutesWeek >= 150 -> Color(0xFF4CAF50) // Green
-        activeMinutesWeek >= 75 -> Color(0xFFFFB300)  // Yellow
+    val intensityMinColor = when {
+        intensityMinutesWeek >= 150 -> Color(0xFF4CAF50) // Green
+        intensityMinutesWeek >= 75 -> Color(0xFFFFB300)  // Yellow
         else -> MaterialTheme.colorScheme.onPrimaryContainer
     }
 
     SummaryCard(
-        title = "Weekly Active Min",
-        value = "$activeMinutesWeek / 150",
+        title = "Weekly Intensity Min",
+        value = "$intensityMinutesWeek / 150",
         containerColor = MaterialTheme.colorScheme.primaryContainer,
         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        valueColor = activeMinColor
+        valueColor = intensityMinColor
     )
 
     Spacer(modifier = Modifier.height(12.dp))
