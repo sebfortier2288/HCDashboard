@@ -12,7 +12,14 @@ import androidx.compose.ui.unit.sp
 import java.time.Duration
 
 @Composable
-fun TodayView(steps: Long, sleepDuration: Duration?, restingHeartRate: Long?, hrvAvg: Double?, hrvBaseline: Double?) {
+fun TodayView(
+    steps: Long,
+    sleepDuration: Duration?,
+    restingHeartRate: Long?,
+    hrvAvg: Double?,
+    hrvBaseline: Double?,
+    activeMinutesWeek: Long
+) {
     val sleepText = sleepDuration?.let {
         val hours = it.toHours()
         val minutes = it.toMinutes() % 60
@@ -33,6 +40,22 @@ fun TodayView(steps: Long, sleepDuration: Duration?, restingHeartRate: Long?, hr
         containerColor = MaterialTheme.colorScheme.secondaryContainer,
         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         valueColor = sleepValueColor
+    )
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    val activeMinColor = when {
+        activeMinutesWeek >= 150 -> Color(0xFF4CAF50) // Green
+        activeMinutesWeek >= 75 -> Color(0xFFFFB300)  // Yellow
+        else -> MaterialTheme.colorScheme.onPrimaryContainer
+    }
+
+    SummaryCard(
+        title = "Weekly Active Min",
+        value = "$activeMinutesWeek / 150",
+        containerColor = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        valueColor = activeMinColor
     )
 
     Spacer(modifier = Modifier.height(12.dp))

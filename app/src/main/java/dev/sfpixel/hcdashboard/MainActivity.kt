@@ -61,7 +61,7 @@ fun calculatePeriodRange(periodType: ActivityPeriodType, offset: Long): Pair<Ins
     return when (periodType) {
         ActivityPeriodType.Week -> {
             val baseDate = now.plusWeeks(offset)
-            val start = baseDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).atStartOfDay(zone).toInstant()
+            val start = baseDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY)).atStartOfDay(zone).toInstant()
             val end = start.plus(7, ChronoUnit.DAYS)
             start to end
         }
@@ -86,7 +86,7 @@ fun formatPeriodLabel(periodType: ActivityPeriodType, offset: Long): String {
     return when (periodType) {
         ActivityPeriodType.Week -> {
             val baseDate = now.plusWeeks(offset)
-            val start = baseDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+            val start = baseDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
             val end = start.plusDays(6)
             val formatter = DateTimeFormatter.ofPattern("MMM d")
             if (start.year == end.year) {
@@ -165,6 +165,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     var todayRestingHeartRate by remember { mutableStateOf<Long?>(null) }
     var hrv7DayAvg by remember { mutableStateOf<Double?>(null) }
     var hrvHistoryAvg by remember { mutableStateOf<Double?>(null) }
+    var activeMinutesWeek by remember { mutableLongStateOf(0L) }
     
     var isAuthorized by remember { mutableStateOf(false) }
     var selectedRange by remember { mutableStateOf(TimeRange.Last7Days) }
@@ -177,7 +178,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     var activityPeriod by remember { mutableStateOf(ActivityPeriodType.Week) }
     var activityOffset by remember { mutableLongStateOf(0L) }
 
-    var showSettingsDialog by remember { mutableStateOf(false) }
+    val showSettingsDialog = remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
 
@@ -312,6 +313,8 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
 
     val loadActivitiesData: suspend (ActivityPeriodType, Long) -> Unit = { periodType, offset ->
         isLoading = true
+        exerciseSessions = emptyList() // Reset to show loading
+        
         try {
             val (startTime, endTime) = calculatePeriodRange(periodType, offset)
             val timeFilter = TimeRangeFilter.between(startTime, endTime)
@@ -391,13 +394,26 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             hrvHistoryAvg = if (hrv30DayRecords.isNotEmpty()) {
                 hrv30DayRecords.map { it.heartRateVariabilityMillis }.average()
             } else null
+
+            // Active minutes for current week (Sunday to now)
+            val weekStart = LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY)).atStartOfDay(ZoneId.systemDefault()).toInstant()
+            val weekHrRecords = fetchAllPages(HeartRateRecord::class, TimeRangeFilter.between(weekStart, now))
+
+            birthDate?.let { date ->
+                val maxHr = HeartRateZoneHandler.calculateMaxHeartRate(date)
+                val zones = HeartRateZoneHandler.getZones(maxHr)
+                val calculatedZones = HeartRateZoneHandler.calculateTimeInZones(weekHrRecords, zones)
+                activeMinutesWeek = HeartRateZoneHandler.calculateActiveMinutes(calculatedZones)
+            } ?: run {
+                activeMinutesWeek = 0L
+            }
             
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
-    LaunchedEffect(isAuthorized, selectedRange, activityPeriod, activityOffset, selectedTab) {
+    LaunchedEffect(isAuthorized, selectedRange, activityPeriod, activityOffset, selectedTab, birthDate) {
         val granted = client.permissionController.getGrantedPermissions()
         if (granted.containsAll(permissions)) {
             isAuthorized = true
@@ -415,7 +431,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         if (session != null) {
             isHeartRateLoading = true
             try {
-                // To handle "grouped" records from apps like Health Sync, 
+                // To handle "grouped" records from apps like Health Sync,
                 // we query the entire day of the activity.
                 val sessionDate = session.startTime.atZone(ZoneId.systemDefault()).toLocalDate()
                 val dayStart = sessionDate.atStartOfDay(ZoneId.systemDefault()).toInstant()
@@ -426,22 +442,30 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                     TimeRangeFilter.between(dayStart, dayEnd)
                 )
                 
-                // Then we filter the samples that fall WITHIN the session duration
-                activityHeartRateSamples = allDayRecords.flatMap { record ->
+                // Filter the samples that fall WITHIN the session duration
+                val filteredSamples = allDayRecords.flatMap { record ->
                     record.samples.filter { sample ->
                         sample.time >= session.startTime && sample.time <= session.endTime
-                    }.map { sample ->
-                        // Wrap each sample in a Record so the chart can handle it
-                        HeartRateRecord(
-                            startTime = sample.time,
-                            endTime = sample.time,
-                            startZoneOffset = record.startZoneOffset,
-                            endZoneOffset = record.endZoneOffset,
-                            samples = listOf(sample),
-                            metadata = record.metadata
-                        )
                     }
-                }.sortedBy { it.startTime }
+                }.sortedBy { it.time }
+
+                // Map samples to HeartRateRecord with proper duration
+                activityHeartRateSamples = filteredSamples.mapIndexed { index, sample ->
+                    val nextTime = if (index < filteredSamples.size - 1) {
+                        filteredSamples[index + 1].time
+                    } else {
+                        session.endTime
+                    }
+                    
+                    HeartRateRecord(
+                        startTime = sample.time,
+                        endTime = nextTime,
+                        startZoneOffset = session.startZoneOffset,
+                        endZoneOffset = session.endZoneOffset,
+                        samples = listOf(sample),
+                        metadata = session.metadata
+                    )
+                }
                 
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -467,7 +491,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text("Health Dashboard", style = MaterialTheme.typography.headlineMedium)
-            IconButton(onClick = { showSettingsDialog = true }) {
+            IconButton(onClick = { showSettingsDialog.value = true }) {
                 Icon(Icons.Default.Settings, contentDescription = "Settings")
             }
         }
@@ -493,7 +517,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             ) {
                 when (selectedTab) {
                     DashboardTab.Today -> {
-                        TodayView(todaySteps, lastNightSleepDuration, todayRestingHeartRate, hrv7DayAvg, hrvHistoryAvg)
+                        TodayView(todaySteps, lastNightSleepDuration, todayRestingHeartRate, hrv7DayAvg, hrvHistoryAvg, activeMinutesWeek)
                     }
                     DashboardTab.History -> {
                         HistoryView(
@@ -521,30 +545,34 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
             }
         } else {
-            Text("Please authorize access to Health Connect.")
-            Button(onClick = { requestPermissionLauncher.launch(permissions) }) { Text("Authorize") }
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Button(onClick = {
+                    scope.launch {
+                        requestPermissionLauncher.launch(permissions)
+                    }
+                }) {
+                    Text("Grant Permissions")
+                }
+            }
         }
     }
 
-    if (showSettingsDialog) {
+    if (showSettingsDialog.value) {
         var birthDateInput by remember { mutableStateOf(birthDate?.toString() ?: "") }
         
         AlertDialog(
-            onDismissRequest = { showSettingsDialog = false },
+            onDismissRequest = { showSettingsDialog.value = false },
             title = { Text("Settings") },
             text = {
                 Column {
-                    Text("Date of Birth (YYYY-MM-DD)", style = MaterialTheme.typography.labelMedium)
-                    TextField(
+                    OutlinedTextField(
                         value = birthDateInput,
                         onValueChange = { birthDateInput = it },
-                        placeholder = { Text("1990-01-01") },
+                        label = { Text("Birth Date (YYYY-MM-DD)") },
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Text("Used to calculate Heart Rate Zones (220 - age).", style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
@@ -554,8 +582,8 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                         scope.launch {
                             userPreferences.saveBirthDate(date)
                         }
-                        showSettingsDialog = false
-                    } catch (e: Exception) {
+                        showSettingsDialog.value = false
+                    } catch (_: Exception) {
                         // Show error or keep dialog open
                     }
                 }) {
@@ -563,7 +591,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showSettingsDialog = false }) {
+                TextButton(onClick = { showSettingsDialog.value = false }) {
                     Text("Cancel")
                 }
             }
@@ -613,8 +641,7 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                                 }
                             }
                             
-                            val activeMinutes = calculatedZones.filter { it.name.contains("Zone 3") || it.name.contains("Zone 4") || it.name.contains("Zone 5") }
-                                .sumOf { it.duration.toMinutes() }
+                            val activeMinutes = HeartRateZoneHandler.calculateActiveMinutes(calculatedZones)
                             
                             Spacer(modifier = Modifier.height(8.dp))
                             Text("Active minutes (Z3+): $activeMinutes min", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)

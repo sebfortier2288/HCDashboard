@@ -30,31 +30,46 @@ object HeartRateZoneHandler {
         )
     }
 
-    fun calculateTimeInZones(samples: List<HeartRateRecord>, zones: List<HeartRateZone>): List<HeartRateZone> {
-        if (samples.isEmpty()) return zones
-
+    fun calculateTimeInZones(records: List<HeartRateRecord>, zones: List<HeartRateZone>): List<HeartRateZone> {
         zones.forEach { it.duration = Duration.ZERO }
+        if (records.isEmpty()) return zones
 
-        for (i in 0 until samples.size) {
-            val record = samples[i]
-            val duration = if (record.startTime != record.endTime) {
-                Duration.between(record.startTime, record.endTime)
-            } else if (i < samples.size - 1) {
-                Duration.between(record.startTime, samples[i+1].startTime)
-            } else {
-                Duration.ofSeconds(1)
-            }
+        // We process each sample to be more precise
+        records.forEach { record ->
+            val samples = record.samples.sortedBy { it.time }
+            for (i in samples.indices) {
+                val sample = samples[i]
+                val bpm = sample.beatsPerMinute
+                
+                // Estimate duration for this sample
+                val sampleDuration = if (i < samples.size - 1) {
+                    Duration.between(sample.time, samples[i + 1].time)
+                } else {
+                    // Last sample of the record, we can use 1 second or try to infer from record endTime
+                    if (record.endTime > sample.time) Duration.between(sample.time, record.endTime)
+                    else Duration.ofSeconds(1)
+                }
 
-            val avgBpm = record.samples.map { it.beatsPerMinute }.average()
-            
-            val matchingZone = zones.find { avgBpm >= it.minBpm && avgBpm < it.maxBpm }
-            if (matchingZone != null) {
-                matchingZone.duration = matchingZone.duration.plus(duration)
-            } else if (avgBpm >= zones.last().maxBpm) {
-                zones.last().duration = zones.last().duration.plus(duration)
+                val matchingZone = zones.find { bpm >= it.minBpm && bpm < it.maxBpm }
+                if (matchingZone != null) {
+                    matchingZone.duration = matchingZone.duration.plus(sampleDuration)
+                } else if (bpm >= zones.last().maxBpm) {
+                    zones.last().duration = zones.last().duration.plus(sampleDuration)
+                }
             }
         }
         
         return zones
+    }
+
+    fun calculateActiveMinutes(zones: List<HeartRateZone>): Long {
+        return zones.sumOf { zone ->
+            val minutes = zone.duration.toMinutes()
+            when {
+                zone.name.contains("Zone 3") -> minutes
+                zone.name.contains("Zone 4") || zone.name.contains("Zone 5") -> minutes * 2
+                else -> 0L
+            }
+        }
     }
 }
