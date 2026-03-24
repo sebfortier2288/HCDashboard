@@ -8,10 +8,14 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
@@ -24,6 +28,7 @@ import dev.sfpixel.hcdashboard.ui.theme.HCDashboardTheme
 import dev.sfpixel.hcdashboard.ui.views.ActivitiesView
 import dev.sfpixel.hcdashboard.ui.views.HistoryView
 import dev.sfpixel.hcdashboard.ui.views.TodayView
+import kotlinx.coroutines.launch
 import java.time.*
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
@@ -141,6 +146,11 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
+    val context = LocalContext.current
+    val userPreferences = remember { UserPreferences(context) }
+    val birthDate by userPreferences.birthDate.collectAsState(initial = null)
+    val scope = rememberCoroutineScope()
+    
     var weights by remember { mutableStateOf<List<WeightRecord>>(emptyList()) }
     var bodyFats by remember { mutableStateOf<List<BodyFatRecord>>(emptyList()) }
     var rawSteps by remember { mutableStateOf<List<StepsRecord>>(emptyList()) }
@@ -166,6 +176,8 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
     
     var activityPeriod by remember { mutableStateOf(ActivityPeriodType.Week) }
     var activityOffset by remember { mutableLongStateOf(0L) }
+
+    var showSettingsDialog by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
 
@@ -449,7 +461,16 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
             .padding(horizontal = 16.dp)
     ) {
         Spacer(modifier = Modifier.height(16.dp))
-        Text("Health Dashboard", style = MaterialTheme.typography.headlineMedium)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Health Dashboard", style = MaterialTheme.typography.headlineMedium)
+            IconButton(onClick = { showSettingsDialog = true }) {
+                Icon(Icons.Default.Settings, contentDescription = "Settings")
+            }
+        }
         Spacer(modifier = Modifier.height(8.dp))
 
         if (isAuthorized) {
@@ -508,6 +529,47 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
         }
     }
 
+    if (showSettingsDialog) {
+        var birthDateInput by remember { mutableStateOf(birthDate?.toString() ?: "") }
+        
+        AlertDialog(
+            onDismissRequest = { showSettingsDialog = false },
+            title = { Text("Settings") },
+            text = {
+                Column {
+                    Text("Date of Birth (YYYY-MM-DD)", style = MaterialTheme.typography.labelMedium)
+                    TextField(
+                        value = birthDateInput,
+                        onValueChange = { birthDateInput = it },
+                        placeholder = { Text("1990-01-01") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text("Used to calculate Heart Rate Zones (220 - age).", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    try {
+                        val date = LocalDate.parse(birthDateInput)
+                        scope.launch {
+                            userPreferences.saveBirthDate(date)
+                        }
+                        showSettingsDialog = false
+                    } catch (e: Exception) {
+                        // Show error or keep dialog open
+                    }
+                }) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSettingsDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     selectedActivityState.value?.let { selectedActivity ->
         AlertDialog(
             onDismissRequest = { selectedActivityState.value = null },
@@ -533,6 +595,33 @@ fun HealthDashboard(client: HealthConnectClient, permissions: Set<String>) {
                             selectedRange = TimeRange.Last24h,
                             modifier = Modifier.height(200.dp)
                         )
+                        
+                        birthDate?.let { date ->
+                            val maxHr = HeartRateZoneHandler.calculateMaxHeartRate(date)
+                            val zones = HeartRateZoneHandler.getZones(maxHr)
+                            val calculatedZones = HeartRateZoneHandler.calculateTimeInZones(activityHeartRateSamples, zones)
+                            
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text("Zones HR (Max: $maxHr bpm)", style = MaterialTheme.typography.titleSmall)
+                            calculatedZones.forEach { zone ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("${zone.name}:", style = MaterialTheme.typography.bodySmall)
+                                    Text(ExerciseHandler.formatDuration(zone.duration), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            
+                            val activeMinutes = calculatedZones.filter { it.name.contains("Zone 3") || it.name.contains("Zone 4") || it.name.contains("Zone 5") }
+                                .sumOf { it.duration.toMinutes() }
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Active minutes (Z3+): $activeMinutes min", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        } ?: run {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Set your birth date in settings to see HR zones.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                        }
                     } else {
                         Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
                             Text("No heart rate data found for this activity duration.", style = MaterialTheme.typography.bodySmall)
