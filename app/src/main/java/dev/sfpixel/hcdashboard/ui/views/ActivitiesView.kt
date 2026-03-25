@@ -15,7 +15,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.ExerciseSessionRecord
-import dev.sfpixel.hcdashboard.ActivityPeriodType
+import dev.sfpixel.hcdashboard.PeriodType
 import dev.sfpixel.hcdashboard.formatPeriodLabel
 import dev.sfpixel.hcdashboard.handlers.ExerciseHandler
 import java.time.Duration
@@ -25,9 +25,9 @@ import java.time.format.DateTimeFormatter
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ActivitiesView(
-    periodType: ActivityPeriodType,
+    periodType: PeriodType,
     offset: Long,
-    onPeriodTypeChanged: (ActivityPeriodType) -> Unit,
+    onPeriodTypeChanged: (PeriodType) -> Unit,
     onOffsetChanged: (Long) -> Unit,
     isLoading: Boolean,
     exerciseSessions: List<ExerciseSessionRecord>,
@@ -35,14 +35,14 @@ fun ActivitiesView(
 ) {
     Column {
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            ActivityPeriodType.entries.forEachIndexed { index, period ->
+            PeriodType.entries.forEachIndexed { index, period ->
                 SegmentedButton(
                     selected = periodType == period,
                     onClick = { 
                         onPeriodTypeChanged(period)
                         onOffsetChanged(0) 
                     },
-                    shape = SegmentedButtonDefaults.itemShape(index = index, count = ActivityPeriodType.entries.size)
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = PeriodType.entries.size)
                 ) { Text(period.label) }
             }
         }
