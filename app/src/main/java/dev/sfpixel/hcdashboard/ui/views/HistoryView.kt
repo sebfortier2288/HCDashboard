@@ -11,8 +11,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.*
-import dev.sfpixel.hcdashboard.PeriodType
-import dev.sfpixel.hcdashboard.formatPeriodLabel
+import dev.sfpixel.hcdashboard.models.HealthUtils
+import dev.sfpixel.hcdashboard.models.PeriodType
 import dev.sfpixel.hcdashboard.handlers.*
 import dev.sfpixel.hcdashboard.ui.HealthChart
 
@@ -58,7 +58,7 @@ fun HistoryView(
             }
             
             Text(
-                text = formatPeriodLabel(periodType, offset),
+                text = HealthUtils.formatPeriodLabel(periodType, offset),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -153,7 +153,7 @@ fun HistoryView(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            Text("Daily Activity", style = MaterialTheme.typography.titleMedium)
+            Text("Steps", style = MaterialTheme.typography.titleMedium)
             if (stepsProcessed.isNotEmpty()) {
                 HealthChart(handler = StepsHandler, records = stepsProcessed, periodType = periodType, isColumnChart = true)
             } else {

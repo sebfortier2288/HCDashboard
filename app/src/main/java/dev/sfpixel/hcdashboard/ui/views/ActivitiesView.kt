@@ -15,8 +15,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.records.ExerciseSessionRecord
-import dev.sfpixel.hcdashboard.PeriodType
-import dev.sfpixel.hcdashboard.formatPeriodLabel
+import dev.sfpixel.hcdashboard.models.PeriodType
+import dev.sfpixel.hcdashboard.models.HealthUtils
 import dev.sfpixel.hcdashboard.handlers.ExerciseHandler
 import java.time.Duration
 import java.time.ZoneId
@@ -59,7 +59,7 @@ fun ActivitiesView(
             }
             
             Text(
-                text = formatPeriodLabel(periodType, offset),
+                text = HealthUtils.formatPeriodLabel(periodType, offset),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
