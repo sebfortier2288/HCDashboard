@@ -10,7 +10,7 @@ kotlin = "2.3.20"
 composeBom = "2026.03.00"
 healthConnect = "1.1.0"
 vico = "2.4.3"
-datastore = "1.1.2"
+datastore = "1.2.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
