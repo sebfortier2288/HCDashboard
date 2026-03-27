@@ -21,8 +21,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Nécessaire pour GitVersion et le changelog
+          fetch-depth: 0
 
+      - name: Add safe directory        
+        run: git config --global --add safe.directory /home/runner/work/HCDashboard/HCDashboard
+        
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@v3.2.1
         with:
@@ -43,7 +46,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug -PversionName=${{ steps.gitversion.outputs.semVer }}
+        run: ./gradlew assembleDebug -PversionName=${{ steps.gitversion.outputs.majorMinorPatch }}
 
       - name: Generate Changelog
         id: changelog
@@ -56,8 +59,8 @@ jobs:
       - name: Create Github Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.gitversion.outputs.semVer }}
-          name: Release ${{ steps.gitversion.outputs.semVer }}
+          tag_name: v${{ steps.gitversion.outputs.majorMinorPatch }}
+          name: Release ${{ steps.gitversion.outputs.majorMinorPatch }}
           draft: false
           prerelease: false
           files: app/build/outputs/apk/debug/app-debug.apk
