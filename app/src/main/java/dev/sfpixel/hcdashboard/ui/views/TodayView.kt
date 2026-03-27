@@ -1,5 +1,6 @@
 package dev.sfpixel.hcdashboard.ui.views
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -18,7 +19,8 @@ fun TodayView(
     restingHeartRate: Long?,
     hrvAvg: Double?,
     hrvBaseline: Double?,
-    intensityMinutesWeek: Long
+    intensityMinutesWeek: Long,
+    onSleepClick: () -> Unit = {}
 ) {
     val sleepText = sleepDuration?.let {
         val hours = it.toHours()
@@ -39,7 +41,8 @@ fun TodayView(
         value = sleepText,
         containerColor = MaterialTheme.colorScheme.secondaryContainer,
         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-        valueColor = sleepValueColor
+        valueColor = sleepValueColor,
+        onClick = onSleepClick
     )
 
     Spacer(modifier = Modifier.height(12.dp))
@@ -102,10 +105,13 @@ fun SummaryCard(
     value: String,
     containerColor: Color,
     contentColor: Color,
-    valueColor: Color = contentColor
+    valueColor: Color = contentColor,
+    onClick: (() -> Unit)? = null
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         colors = CardDefaults.cardColors(containerColor = containerColor)
     ) {
         Column(

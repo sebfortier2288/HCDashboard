@@ -35,7 +35,7 @@ import com.patrykandpatrick.vico.core.common.data.ExtraStore
 import com.patrykandpatrick.vico.core.common.component.LineComponent
 import com.patrykandpatrick.vico.core.common.shape.DashedShape
 import com.patrykandpatrick.vico.core.common.shape.Shape
-import dev.sfpixel.hcdashboard.PeriodType
+import dev.sfpixel.hcdashboard.models.PeriodType
 import dev.sfpixel.hcdashboard.handlers.HealthDataHandler
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
